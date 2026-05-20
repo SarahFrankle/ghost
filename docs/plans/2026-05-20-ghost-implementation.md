@@ -209,8 +209,9 @@ type Models struct {
 }
 
 type Thresholds struct {
-	RuleMinEvidenceCount int `toml:"rule_min_evidence_count"`
-	RuleMinProjectCount  int `toml:"rule_min_project_count"`
+	RuleMinEvidenceCount  int `toml:"rule_min_evidence_count"`
+	RuleMinProjectCount   int `toml:"rule_min_project_count"`
+	VoiceMinEvidenceCount int `toml:"voice_min_evidence_count"`
 }
 
 type Paths struct {
@@ -250,8 +251,9 @@ func Defaults() Config {
 			Smart: "claude-opus-4-7",
 		},
 		Thresholds: Thresholds{
-			RuleMinEvidenceCount: 2,
-			RuleMinProjectCount:  2,
+			RuleMinEvidenceCount:  2,
+			RuleMinProjectCount:   2,
+			VoiceMinEvidenceCount: 2,
 		},
 		Paths: Paths{
 			TranscriptsGlob: "~/.claude/projects/**/*.jsonl",
@@ -842,17 +844,21 @@ go test ./internal/anthropic/... && git add . && git commit -m "feat: anthropic 
 ```markdown
 You are extracting atomic observations from a Claude Code transcript.
 
-For each piece of evidence in the transcript, output one JSON observation. Categorize each as:
-- "rule": an explicit do/don't preference the user expressed
-- "voice": stylistic patterns in how the user writes
-- "topic": domain-specific guidance scoped to a subject area
-- "identity": role, expertise, perspective, organizational context
+For each piece of evidence in the transcript, output one JSON observation. Categorize each as one of:
+
+- "identity": role, expertise, team, stack, organizational context. Third-person facts ABOUT the user, not behavioral directives. Example: "works on backend microservices in Kotlin/Go at Miro Content Security."
+- "rule": an explicit do/don't preference the user expressed about how Claude should work with them. Governs behavior universally regardless of register. Example: "break comments at end of thought, not wrapped mid-sentence."
+- "topic": domain-specific guidance scoped to a subject area (testing, writing PRs, git workflow). Include a `topic` field naming the subject.
+- "voice": stylistic patterns in how the USER writes (lowercase, sentence length, framing tics). Always include a `context` field naming the register: "cli-chat" (default; user talking to Claude), "annual-review", "slack", "exec-brief", or another clearly-named register if explicit in the transcript. If you cannot confidently identify the register, drop the observation rather than guess.
 
 Each observation must cite evidence (turn number and a short quote).
 
 Output a single JSON object: {"observations": [ ... ]}.
 
-Be conservative. Do not infer rules from absence. Skip noise.
+Be conservative. Do not infer rules from absence. Skip noise. Do NOT
+treat the user's CLI voice (e.g., lowercase, terse) as a rule for
+how Claude should write — that goes in a voice observation with
+context "cli-chat", not in a rule.
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -921,7 +927,8 @@ var systemPrompt string
 
 type Observation struct {
 	Kind       string `json:"kind"`
-	Topic      string `json:"topic,omitempty"`
+	Topic      string `json:"topic,omitempty"`   // for kind=topic
+	Context    string `json:"context,omitempty"` // for kind=voice (cli-chat, annual-review, slack, ...)
 	Text       string `json:"text"`
 	Evidence   string `json:"evidence"`
 	Confidence string `json:"confidence,omitempty"`
@@ -993,18 +1000,21 @@ go test ./internal/extract/... && git add . && git commit -m "feat: stage 1 extr
 ```markdown
 You are clustering atomic observations across many conversations.
 
-Input: a JSON array of observations, each with kind, text, evidence, and source project.
+Input: a JSON array of observations, each with kind, text, evidence, source project, and (for voice) a context field, and (for topic) a topic name.
 
 Tasks:
-1. Group observations by kind (rule, voice, topic, identity).
-2. Within topic, sub-group by topic name.
-3. Collapse near-duplicates. Merge their evidence lists and union their source projects.
+1. Group observations by kind (identity, rule, voice, topic).
+2. Within voice, sub-group by context (cli-chat, annual-review, slack, exec-brief, etc.).
+3. Within topic, sub-group by topic name.
+4. Collapse near-duplicates within each group. Merge their evidence lists and union their source projects.
 
 Output JSON shape:
 {
-  "rules": [{"text": "...", "evidence": ["..."], "projects": ["..."]}],
-  "voice": [{"text": "...", "evidence": ["..."], "projects": ["..."]}],
   "identity": [{"text": "...", "evidence": ["..."], "projects": ["..."]}],
+  "rules":    [{"text": "...", "evidence": ["..."], "projects": ["..."]}],
+  "voice": {
+    "<context>": [{"text": "...", "evidence": ["..."], "projects": ["..."]}]
+  },
   "topics": {
     "<topic_name>": [{"text": "...", "evidence": ["..."], "projects": ["..."]}]
   }
@@ -1030,8 +1040,10 @@ import (
 
 func TestCluster(t *testing.T) {
 	fake := anthropic.NewFake().With("cheap", `{
+		"identity":[],
 		"rules":[{"text":"don't mock the database","evidence":["convA:3","convB:1"],"projects":["repoA","repoB"]}],
-		"voice":[], "identity":[], "topics":{"testing":[]}
+		"voice":{"cli-chat":[]},
+		"topics":{"testing":[]}
 	}`)
 
 	results := []extract.Result{
@@ -1073,15 +1085,16 @@ type Entry struct {
 }
 
 type Clusters struct {
-	Rules    []Entry            `json:"rules"`
-	Voice    []Entry            `json:"voice"`
 	Identity []Entry            `json:"identity"`
-	Topics   map[string][]Entry `json:"topics"`
+	Rules    []Entry            `json:"rules"`
+	Voice    map[string][]Entry `json:"voice"`  // keyed by context
+	Topics   map[string][]Entry `json:"topics"` // keyed by topic name
 }
 
 type flatInput struct {
 	Kind     string `json:"kind"`
 	Topic    string `json:"topic,omitempty"`
+	Context  string `json:"context,omitempty"`
 	Text     string `json:"text"`
 	Evidence string `json:"evidence"`
 	Project  string `json:"project"`
@@ -1092,8 +1105,8 @@ func Run(ctx context.Context, client anthropic.Client, results []extract.Result)
 	for _, r := range results {
 		for _, o := range r.Observations {
 			flat = append(flat, flatInput{
-				Kind: o.Kind, Topic: o.Topic, Text: o.Text,
-				Evidence: o.Evidence, Project: r.Project,
+				Kind: o.Kind, Topic: o.Topic, Context: o.Context,
+				Text: o.Text, Evidence: o.Evidence, Project: r.Project,
 			})
 		}
 	}
@@ -1117,6 +1130,9 @@ func Run(ctx context.Context, client anthropic.Client, results []extract.Result)
 	if out.Topics == nil {
 		out.Topics = map[string][]Entry{}
 	}
+	if out.Voice == nil {
+		out.Voice = map[string][]Entry{}
+	}
 	return out, nil
 }
 ```
@@ -1132,20 +1148,38 @@ go test ./internal/cluster/... && git add . && git commit -m "feat: stage 2 clus
 ## Task 8: Stage 3 — synthesize
 
 **Files:**
-- Create: `internal/synthesize/synthesize.go`, `internal/synthesize/synthesize_test.go`, `prompts/synthesize_profile.md`, `synthesize_rules.md`, `synthesize_topics.md`, `synthesize_index.md`
+- Create: `internal/synthesize/synthesize.go`, `internal/synthesize/synthesize_test.go`, `prompts/synthesize_identity.md`, `synthesize_rules.md`, `synthesize_topics.md`, `synthesize_voice.md`, `synthesize_index.md`
 
-- [ ] **Step 1: Prompts (four files)**
+- [ ] **Step 1: Prompts (five files)**
 
-`prompts/synthesize_profile.md`:
+`prompts/synthesize_identity.md`:
 
 ```markdown
-You write the user's profile in first-person prose. Input is clusters of "voice" and "identity" observations. Output: 40-80 lines of grounded, specific prose. Identity first, then voice. No headers, no bullets, no self-congratulation.
+You write a short, factual identity file describing the user as context for an AI assistant.
+
+Input: the "identity" cluster — observations about the user's role, team, expertise, stack, organization.
+
+Output: 15-25 lines of THIRD-PERSON, factual prose. Cover (when supported by evidence): role and team, primary languages and frameworks, the kind of work they do, headline domain expertise, organizational context.
+
+Do NOT:
+- Use first-person voice ("I am a backend engineer...")
+- Include behavioral directives ("act like...", "you should...")
+- Make the assistant narrow itself to the user's specialties — this is context, not a constraint
+- Use stylistic mimicry — write in clear professional prose regardless of how the user writes
+
+The reader of this file is an AI assistant that should be a generalist expert across all domains. This file helps it understand WHO it's talking to.
 ```
 
 `prompts/synthesize_rules.md`:
 
 ```markdown
-You write a mechanical do/don't rule list. Input is a filtered set of rules — each appears in at least 2 conversations across at least 2 projects. For each: one line, then a "Why:" line if the reason is not obvious. Group by rough topic. No commentary.
+You write a mechanical do/don't rule list that governs how Claude should behave when working with this user.
+
+Input: a filtered set of rules — each appears in at least 2 conversations across at least 2 projects.
+
+For each rule: one line stating the rule, then a "Why:" line if the reason is not obvious. Group by rough topic. No commentary, no preamble.
+
+These rules apply universally regardless of register. Do NOT include voice preferences here (those go in voice files). Do NOT include domain-specific guidance here (those go in topic files). Only general behavioral rules.
 ```
 
 `prompts/synthesize_topics.md`:
@@ -1154,10 +1188,57 @@ You write a mechanical do/don't rule list. Input is a filtered set of rules — 
 You write one topic file. Input: a topic name and its cluster entries. Output: a focused markdown document with the specific guidance a developer reading this topic needs. Cite source projects in passing when relevant.
 ```
 
+`prompts/synthesize_voice.md`:
+
+```markdown
+You write a voice reference file describing how the user writes in a specific register.
+
+Input: a register name (e.g., "cli-chat", "annual-review", "slack", "exec-brief") and a cluster of voice observations drawn from transcripts where the user was writing in that register.
+
+Output structure:
+
+# Voice: <register name>
+
+> This file is reference material for ghostwriting in this register on the user's behalf. It is NOT a directive that affects Claude's normal responses.
+
+## When to use
+[1-2 sentences: situations where Claude should draft text in this voice]
+
+## Characteristic patterns
+[Bulleted concrete observations: capitalization, sentence length, hedging, em-dash usage, framing tics, vocabulary preferences, etc. Each grounded in evidence.]
+
+## Sample phrasings
+[2-4 short illustrative excerpts or paraphrases that capture the register]
+
+Be concrete and specific. Avoid vague descriptors like "professional" or "casual" — describe the actual patterns.
+```
+
 `prompts/synthesize_index.md`:
 
 ```markdown
-You generate the topic lookup index. Input: a list of topic files with a short content summary. For each, produce trigger phrases — short comma-separated keywords/topics that indicate the file should be loaded. Output the markdown index per the format shown.
+You generate the index file that the runtime skill uses to decide when to lazy-load topic and voice files.
+
+Input: a list of files with short content summaries. Each entry is tagged as either "topic" or "voice".
+
+For each entry produce trigger phrases:
+- TOPIC triggers fire when the conversation touches that domain. Be moderately broad — better to load a relevant topic than to miss it.
+- VOICE triggers fire ONLY when the user is asking Claude to draft or write something in that register. Be narrow. "Draft my annual review" triggers voice/annual-review; "I'm thinking about my annual review timeline" does NOT.
+
+Output a markdown file with two sections:
+
+# Topic Index
+
+Read the referenced file when the conversation touches the listed triggers. Do not pre-load. Use the Read tool on demand.
+
+- **<topic-name>** — `~/.ghost/topics/<topic-name>.md`
+  Triggers: <comma-separated trigger phrases>
+
+# Voice Index
+
+Read the referenced file ONLY when the user is asking you to draft, compose, or ghostwrite in that register. Do not load just because the register is mentioned.
+
+- **<register>** — `~/.ghost/voice/<register>.md`
+  Triggers: <comma-separated trigger phrases focused on ghostwriting tasks>
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -1176,29 +1257,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSynthesizeFiltersRulesByEvidenceAndProjects(t *testing.T) {
+func TestSynthesizeFiltersRulesAndVoice(t *testing.T) {
 	fake := anthropic.NewFake().
-		With("smart", "PROFILE_TEXT") // intentionally same response for all smart calls in this test
+		With("smart", "BODY") // single response for every smart call in this test
 
 	clusters := cluster.Clusters{
+		Identity: []cluster.Entry{{Text: "backend engineer at Miro"}},
 		Rules: []cluster.Entry{
-			{Text: "keep", Evidence: []string{"a:1", "b:1"}, Projects: []string{"r1", "r2"}}, // passes
-			{Text: "drop one project", Evidence: []string{"a:1", "a:2"}, Projects: []string{"r1"}}, // fails project count
-			{Text: "drop one evidence", Evidence: []string{"a:1"}, Projects: []string{"r1", "r2"}}, // fails evidence count
+			{Text: "keep rule", Evidence: []string{"a:1", "b:1"}, Projects: []string{"r1", "r2"}},
+			{Text: "drop one project", Evidence: []string{"a:1", "a:2"}, Projects: []string{"r1"}},
+			{Text: "drop one evidence", Evidence: []string{"a:1"}, Projects: []string{"r1", "r2"}},
+		},
+		Voice: map[string][]cluster.Entry{
+			"cli-chat":      {{Text: "lowercase, terse", Evidence: []string{"a:1", "b:2"}}}, // passes
+			"annual-review": {{Text: "formal", Evidence: []string{"a:1"}}},                  // dropped, only 1 evidence
 		},
 		Topics: map[string][]cluster.Entry{"testing": {{Text: "x"}}},
 	}
 
 	out, err := Run(context.Background(), fake, clusters, config.Defaults().Thresholds)
 	require.NoError(t, err)
-	assert.NotEmpty(t, out.Profile)
+	assert.NotEmpty(t, out.Identity)
 	assert.NotEmpty(t, out.Rules)
 	assert.NotEmpty(t, out.Index)
 	assert.Contains(t, out.Topics, "testing")
+	assert.Contains(t, out.Voice, "cli-chat")
+	assert.NotContains(t, out.Voice, "annual-review") // filtered by voice_min_evidence_count
 	// Inspect that the rules call only saw the kept rule:
 	for _, c := range fake.Calls() {
-		if c.System == rulesPromptForTest() { // helper getter
-			assert.Contains(t, c.User, "keep")
+		if c.System == rulesPrompt {
+			assert.Contains(t, c.User, "keep rule")
 			assert.NotContains(t, c.User, "drop one project")
 			assert.NotContains(t, c.User, "drop one evidence")
 		}
@@ -1226,8 +1314,8 @@ import (
 	"github.com/sfrankle/ghost/internal/config"
 )
 
-//go:embed ../../prompts/synthesize_profile.md
-var profilePrompt string
+//go:embed ../../prompts/synthesize_identity.md
+var identityPrompt string
 
 //go:embed ../../prompts/synthesize_rules.md
 var rulesPrompt string
@@ -1235,30 +1323,34 @@ var rulesPrompt string
 //go:embed ../../prompts/synthesize_topics.md
 var topicsPrompt string
 
+//go:embed ../../prompts/synthesize_voice.md
+var voicePrompt string
+
 //go:embed ../../prompts/synthesize_index.md
 var indexPrompt string
 
 type Output struct {
-	Profile string
-	Rules   string
-	Index   string
-	Topics  map[string]string // topic name -> file body
+	Identity string
+	Rules    string
+	Index    string
+	Topics   map[string]string // topic name -> file body
+	Voice    map[string]string // context -> file body
 }
 
 func Run(ctx context.Context, c anthropic.Client, clusters cluster.Clusters, th config.Thresholds) (Output, error) {
-	out := Output{Topics: map[string]string{}}
+	out := Output{Topics: map[string]string{}, Voice: map[string]string{}}
 
-	// Profile from voice + identity
-	in, _ := json.Marshal(map[string]any{"voice": clusters.Voice, "identity": clusters.Identity})
-	profile, err := c.Complete(ctx, anthropic.Request{Role: "smart", System: profilePrompt, User: string(in)})
+	// Identity (third-person factual context)
+	in, _ := json.Marshal(clusters.Identity)
+	identity, err := c.Complete(ctx, anthropic.Request{Role: "smart", System: identityPrompt, User: string(in)})
 	if err != nil {
-		return out, fmt.Errorf("profile: %w", err)
+		return out, fmt.Errorf("identity: %w", err)
 	}
-	out.Profile = profile
+	out.Identity = identity
 
-	// Rules — filter first
-	kept := filterRules(clusters.Rules, th)
-	in, _ = json.Marshal(kept)
+	// Rules — filter by evidence count and project count
+	keptRules := filterByThresholds(clusters.Rules, th.RuleMinEvidenceCount, th.RuleMinProjectCount)
+	in, _ = json.Marshal(keptRules)
 	rules, err := c.Complete(ctx, anthropic.Request{Role: "smart", System: rulesPrompt, User: string(in)})
 	if err != nil {
 		return out, fmt.Errorf("rules: %w", err)
@@ -1275,12 +1367,26 @@ func Run(ctx context.Context, c anthropic.Client, clusters cluster.Clusters, th 
 		out.Topics[name] = body
 	}
 
-	// Index from topic summaries
-	summaries := map[string]string{}
-	for name, body := range out.Topics {
-		summaries[name] = firstNLines(body, 5)
+	// One voice file per context, threshold-gated
+	for context, entries := range clusters.Voice {
+		keptVoice := filterByThresholds(entries, th.VoiceMinEvidenceCount, 0) // no project floor for voice
+		if len(keptVoice) == 0 {
+			continue
+		}
+		in, _ := json.Marshal(map[string]any{"context": context, "entries": keptVoice})
+		body, err := c.Complete(ctx, anthropic.Request{Role: "smart", System: voicePrompt, User: string(in)})
+		if err != nil {
+			return out, fmt.Errorf("voice %s: %w", context, err)
+		}
+		out.Voice[context] = body
 	}
-	in, _ = json.Marshal(summaries)
+
+	// Index covers both topics and voice files
+	indexInput := map[string]any{
+		"topics": summarize(out.Topics),
+		"voice":  summarize(out.Voice),
+	}
+	in, _ = json.Marshal(indexInput)
 	index, err := c.Complete(ctx, anthropic.Request{Role: "smart", System: indexPrompt, User: string(in)})
 	if err != nil {
 		return out, fmt.Errorf("index: %w", err)
@@ -1290,16 +1396,26 @@ func Run(ctx context.Context, c anthropic.Client, clusters cluster.Clusters, th 
 	return out, nil
 }
 
-func filterRules(rules []cluster.Entry, th config.Thresholds) []cluster.Entry {
-	out := make([]cluster.Entry, 0, len(rules))
-	for _, r := range rules {
-		if len(r.Evidence) < th.RuleMinEvidenceCount {
+func summarize(files map[string]string) map[string]string {
+	out := make(map[string]string, len(files))
+	for name, body := range files {
+		out[name] = firstNLines(body, 5)
+	}
+	return out
+}
+
+// filterByThresholds keeps entries whose evidence and project counts
+// meet the floors. Passing 0 for projectFloor disables that check.
+func filterByThresholds(entries []cluster.Entry, evidenceFloor, projectFloor int) []cluster.Entry {
+	out := make([]cluster.Entry, 0, len(entries))
+	for _, e := range entries {
+		if len(e.Evidence) < evidenceFloor {
 			continue
 		}
-		if len(r.Projects) < th.RuleMinProjectCount {
+		if projectFloor > 0 && len(e.Projects) < projectFloor {
 			continue
 		}
-		out = append(out, r)
+		out = append(out, e)
 	}
 	return out
 }
@@ -1369,16 +1485,17 @@ import (
 func TestRefineEach(t *testing.T) {
 	fake := anthropic.NewFake().With("smart", "REFINED")
 	in := map[string]string{
-		"profile.md": "raw",
-		"rules.md":   "raw",
-		"topics/testing.md": "raw",
+		"identity.md":          "raw",
+		"rules.md":             "raw",
+		"topics/testing.md":    "raw",
+		"voice/cli-chat.md":    "raw",
 	}
 	out, err := RunMany(context.Background(), fake, in)
 	require.NoError(t, err)
 	for path := range in {
 		assert.Equal(t, "REFINED", out[path], "file %s should be refined", path)
 	}
-	assert.Equal(t, 3, len(fake.Calls()))
+	assert.Equal(t, 4, len(fake.Calls()))
 }
 ```
 
@@ -1573,12 +1690,15 @@ func Run(ctx context.Context, c anthropic.Client, cfg config.Config, opts Option
 				return r, err
 			}
 			files := map[string]string{
-				"profile.md": synth.Profile,
-				"rules.md":   synth.Rules,
-				"index.md":   synth.Index,
+				"identity.md": synth.Identity,
+				"rules.md":    synth.Rules,
+				"index.md":    synth.Index,
 			}
 			for name, body := range synth.Topics {
 				files[filepath.Join("topics", name+".md")] = body
+			}
+			for context, body := range synth.Voice {
+				files[filepath.Join("voice", context+".md")] = body
 			}
 
 			if stageSet["refine"] {
@@ -1922,7 +2042,8 @@ Update `newRootCmd()` in `cmd/ghost/main.go` to include the new commands:
 
 ```go
 cmd.AddCommand(newComposeCmd(), newShowCmd(), newStatusCmd(),
-    newTopicsCmd(), newAddRuleCmd(), newForgetCmd(), newConfigCmd(), newEvalCmd())
+    newTopicsCmd(), newVoiceCmd(), newAddRuleCmd(), newForgetCmd(),
+    newConfigCmd(), newEvalCmd())
 ```
 
 - [ ] **Step 2: Write the failing tests**
@@ -1942,19 +2063,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestShowPrintsProfileAndRules(t *testing.T) {
+func TestShowPrintsIdentityAndRules(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	gd := filepath.Join(tmp, ".ghost")
 	require.NoError(t, os.MkdirAll(gd, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(gd, "profile.md"), []byte("PROFILE"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(gd, "identity.md"), []byte("IDENTITY"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(gd, "rules.md"), []byte("RULES"), 0o644))
 
 	var out bytes.Buffer
 	cmd := newShowCmd()
 	cmd.SetOut(&out)
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "PROFILE")
+	assert.Contains(t, out.String(), "IDENTITY")
 	assert.Contains(t, out.String(), "RULES")
 }
 
@@ -1989,10 +2110,10 @@ import (
 func newShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
-		Short: "Print profile + rules",
+		Short: "Print identity + rules + manual rules",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			gd := expandHome("~/.ghost")
-			for _, name := range []string{"profile.md", "rules.md", "rules.user.md"} {
+			for _, name := range []string{"identity.md", "rules.md", "rules.user.md"} {
 				data, err := os.ReadFile(filepath.Join(gd, name))
 				if err != nil && !os.IsNotExist(err) {
 					return err
@@ -2018,13 +2139,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newTopicsCmd() *cobra.Command {
+func newTopicsCmd() *cobra.Command { return newListCmd("topics", "topics", "List topic files") }
+func newVoiceCmd() *cobra.Command  { return newListCmd("voice", "voice", "List voice files (one per register)") }
+
+func newListCmd(use, subdir, short string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "topics",
-		Short: "List topic files with last-modified time",
+		Use:   use,
+		Short: short,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			topicsDir := filepath.Join(expandHome("~/.ghost"), "topics")
-			entries, err := os.ReadDir(topicsDir)
+			dir := filepath.Join(expandHome("~/.ghost"), subdir)
+			entries, err := os.ReadDir(dir)
 			if err != nil {
 				if os.IsNotExist(err) {
 					return nil
@@ -2242,16 +2366,16 @@ go test ./... && git add . && git commit -m "feat: config show/edit commands"
 `prompts/eval.md`:
 
 ```markdown
-You are judging whether a synthesized profile + rule set accurately describes a person based on a held-out conversation.
+You are judging whether a synthesized identity + rule set accurately describes a person based on a held-out conversation.
 
 Input:
-- profile.md text
-- rules.md text
+- identity.md text (third-person factual context about the user)
+- rules.md text (behavioral rules for Claude when working with the user)
 - a held-out transcript
 
-Output JSON: {"voice_match": 0-10, "rule_coverage": 0-10, "false_positives": 0-10, "notes": "..."}
-- voice_match: how well does the profile describe the way the user talks here?
-- rule_coverage: how many user preferences in this conversation are covered by rules?
+Output JSON: {"identity_match": 0-10, "rule_coverage": 0-10, "false_positives": 0-10, "notes": "..."}
+- identity_match: how accurately does the identity describe what we observe about the user in this conversation?
+- rule_coverage: how many user preferences expressed in this conversation are covered by rules?
 - false_positives: how many rules in rules.md are contradicted by this conversation?
 ```
 
@@ -2270,10 +2394,10 @@ import (
 )
 
 func TestEvalParsesScores(t *testing.T) {
-	fake := anthropic.NewFake().With("smart", `{"voice_match":8,"rule_coverage":6,"false_positives":1,"notes":"ok"}`)
-	score, err := Judge(context.Background(), fake, "PROFILE", "RULES", "TRANSCRIPT")
+	fake := anthropic.NewFake().With("smart", `{"identity_match":8,"rule_coverage":6,"false_positives":1,"notes":"ok"}`)
+	score, err := Judge(context.Background(), fake, "IDENTITY", "RULES", "TRANSCRIPT")
 	require.NoError(t, err)
-	assert.Equal(t, 8, score.VoiceMatch)
+	assert.Equal(t, 8, score.IdentityMatch)
 	assert.Equal(t, 1, score.FalsePositives)
 }
 ```
@@ -2298,14 +2422,14 @@ import (
 var systemPrompt string
 
 type Score struct {
-	VoiceMatch     int    `json:"voice_match"`
+	IdentityMatch  int    `json:"identity_match"`
 	RuleCoverage   int    `json:"rule_coverage"`
 	FalsePositives int    `json:"false_positives"`
 	Notes          string `json:"notes"`
 }
 
-func Judge(ctx context.Context, c anthropic.Client, profile, rules, transcript string) (Score, error) {
-	user := fmt.Sprintf("PROFILE:\n%s\n\nRULES:\n%s\n\nTRANSCRIPT:\n%s", profile, rules, transcript)
+func Judge(ctx context.Context, c anthropic.Client, identity, rules, transcript string) (Score, error) {
+	user := fmt.Sprintf("IDENTITY:\n%s\n\nRULES:\n%s\n\nTRANSCRIPT:\n%s", identity, rules, transcript)
 	raw, err := c.Complete(ctx, anthropic.Request{Role: "smart", System: systemPrompt, User: user})
 	if err != nil {
 		return Score{}, err
@@ -2335,30 +2459,42 @@ go test ./... && git add . && git commit -m "feat: ghost eval"
 
 - [ ] **Step 1: Write SKILL.md**
 
-`skill/SKILL.md`:
+`skill/SKILL.md`: use the exact content specified in the spec under "Runtime: the skill" → "SKILL.md". Reproduced here for convenience:
 
 ```markdown
 ---
 name: ghost
-description: Use at the start of any task. Checks the ghost topic index and reads matching topic files before responding. Triggers on any task touching a topic listed in ~/.ghost/index.md.
+description: Use at the start of any task. Checks the ghost index and reads matching topic OR voice files before responding. Triggers on any task touching an entry listed in ~/.ghost/index.md.
 ---
 
-# Ghost — lazy-load topic guidance
+# Ghost — lazy-load topic and voice guidance
 
-You have a global profile and rule set always loaded. You also have an index of deeper topic files at ~/.ghost/index.md.
+You have identity context and a rule set always loaded. You also have an index at ~/.ghost/index.md listing two kinds of lazy-loaded files:
+
+- **topic files** under `~/.ghost/topics/` — deeper guidance for specific domains (testing, writing, git-workflow, etc.)
+- **voice files** under `~/.ghost/voice/` — references for how the user writes in specific registers, used ONLY when ghostwriting on their behalf
 
 ## Mechanical check (before responding to the user)
 
 1. Read ~/.ghost/index.md if you have not already this session.
-2. Match the user's request against the triggers for each topic.
-3. If any topic matches, Read that topic file BEFORE writing code or answering. Do not skip on the grounds that you "probably know."
-4. If no topic matches, proceed without loading anything.
+2. Match the user's request against the triggers for each entry.
+3. If a TOPIC entry matches, Read that topic file before writing code or answering.
+4. If a VOICE entry matches AND the user is asking you to draft or write something in that register, Read that voice file before producing the draft. Do NOT load a voice file just because the register is mentioned — only when you're being asked to write in it.
+5. If nothing matches, proceed without loading anything.
 
-A topic loaded once per session stays in context — do not re-Read it.
+A file loaded once per session stays in context — do not re-Read it.
+
+## Identity is context, not a template
+
+The always-loaded `identity.md` tells you who the user is. Use it to calibrate your answers (their stack, expertise, organization), not as a template to mimic. The user is a specialist in some areas; you stay a generalist across all areas.
+
+## Voice files do not affect your normal speech
+
+Voice files describe the user's writing style in a specific register. They are reference material for ghostwriting. They do NOT instruct you to adopt that voice in your normal responses. When you load `voice/cli-chat.md` because the user is asking you to draft a CLI message in their voice, mirror that voice in the draft only — your surrounding response stays in your normal voice.
 
 ## What NOT to load
 
-Do not load every topic file at session start. The whole point is lazy loading. Loading all topics defeats the token-economy design.
+Do not load every topic or voice file at session start. The whole point is lazy loading. Loading everything defeats the token-economy design.
 ```
 
 - [ ] **Step 2: Install script**
@@ -2435,7 +2571,7 @@ func TestSmoke(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, r.Synthesized)
 
-	for _, name := range []string{"profile.md", "rules.md", "index.md"} {
+	for _, name := range []string{"identity.md", "rules.md", "index.md"} {
 		_, err := os.Stat(filepath.Join(cfg.Paths.OutputDir, name))
 		require.NoError(t, err, "missing %s", name)
 	}
@@ -2491,7 +2627,7 @@ ghost topics
 Edit `~/.claude/CLAUDE.md` and add above the existing `@memory/MEMORY.md` line:
 
 ```markdown
-@~/.ghost/profile.md
+@~/.ghost/identity.md
 @~/.ghost/rules.md
 @~/.ghost/rules.user.md
 @~/.ghost/index.md

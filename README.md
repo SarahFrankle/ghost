@@ -1,12 +1,20 @@
 # ghost
 
 Your Claude Code ghostwriter. Reads your conversation history and
-distills it into a profile, rule set, and indexed library of topic
-files that every Claude Code session loads automatically.
+distills it into four kinds of output:
+
+- **identity** — who you are, what you work on (context for Claude)
+- **rules** — how Claude should behave when collaborating with you
+- **topics** — deeper domain guidance, loaded on demand
+- **voice** — how you write in each register (CLI, annual review,
+  Slack, exec brief), loaded only when Claude is ghostwriting on
+  your behalf
 
 The point: feedback you gave Claude in one repo six months ago shapes
 how Claude behaves in every repo today. No more re-explaining your
-preferences each session.
+preferences each session. And when you ask Claude to draft something
+in your voice, it has actual reference material to mirror — without
+that voice contaminating Claude's normal responses.
 
 > Status: design phase. This README describes the intended UX. See
 > [`docs/specs/`](docs/specs/) for the design.
@@ -20,11 +28,14 @@ go install github.com/sfrankle/ghost@latest
 Then add these lines to `~/.claude/CLAUDE.md`:
 
 ```markdown
-@~/.ghost/profile.md
+@~/.ghost/identity.md
 @~/.ghost/rules.md
 @~/.ghost/rules.user.md
 @~/.ghost/index.md
 ```
+
+Topic and voice files are NOT included — Claude reads them on demand
+when the index triggers match.
 
 ## First run
 
@@ -74,8 +85,9 @@ Other useful flags:
 ## Day-to-day commands
 
 ```bash
-ghost show                 # print profile + rules
+ghost show                 # print identity + rules + manual rules
 ghost topics               # list topic files
+ghost voice                # list voice files (one per register)
 ghost status               # ledger summary
 ghost add-rule "<text>"    # pin a manual rule (survives recompose)
 ghost forget <conv>        # drop a conversation's observations
@@ -88,14 +100,32 @@ ghost config edit          # open ~/.ghost/config.toml in $EDITOR
 
 ```
 ~/.ghost/
-  profile.md           Voice and identity. Always loaded.
-  rules.md             Synthesized do/don't rules. Always loaded.
-  rules.user.md        Your manual rules. Survives recompose.
-  index.md             Topic lookup table for lazy loading.
-  topics/*.md          Deep guidance per topic. Loaded on demand.
+  identity.md          Who you are, what you work on. Context for Claude. Always loaded.
+  rules.md             Synthesized do/don't rules for how Claude works with you. Always loaded.
+  rules.user.md        Your manual rules. Survives recompose. Always loaded.
+  index.md             Lookup table — triggers for topics AND voice. Always loaded.
+  topics/*.md          Deep guidance per domain. Loaded on demand by topic trigger.
+  voice/*.md           Per-register writing style (cli-chat, annual-review, slack, exec-brief).
+                       Loaded ONLY when Claude is ghostwriting in that register.
   config.toml          Tunable thresholds and model selection.
   .state/              Ledger, observations, clusters. Don't hand-edit.
 ```
+
+### Identity vs. voice vs. rules
+
+These three layers do different jobs. The distinction matters:
+
+- **Identity** is context *for* Claude. "Sarah works in Kotlin on
+  backend services at Miro" helps Claude calibrate its answers. It
+  does NOT narrow Claude to backend-only or restrict its expertise.
+- **Rules** are instructions *to* Claude. "Break comments at end of
+  thought, not mid-sentence" governs Claude's output regardless of
+  what's being written.
+- **Voice** is reference material *about* you. Used when Claude is
+  drafting on your behalf in a specific register. Your CLI voice
+  (lowercase, terse) does not cause Claude to start writing
+  lowercase in its own responses — it's only mirrored when Claude
+  is drafting a CLI message for you.
 
 ## Migrating from `~/.claude/memory/`
 
@@ -119,18 +149,27 @@ Four-stage pipeline:
 2. **cluster** — corpus-level, cheap model. Groups observations, dedups
    near-duplicates, merges evidence.
 3. **synthesize** — corpus-level, smart model. Writes draft
-   `profile.md`, `rules.md`, `index.md`, `topics/*.md` from clusters.
+   `identity.md`, `rules.md`, `index.md`, `topics/*.md`, and
+   `voice/*.md` from clusters. Rules are filtered to those appearing
+   in ≥2 conversations across ≥2 projects; voice files are only
+   generated for registers with enough evidence.
 4. **refine** — per output file, smart model. Orwell-style pass:
    delete sentences you wouldn't miss.
 
 Observations are an immutable append-only log keyed by content hash.
-The four files in your home directory are a regenerable materialized
-view. You can re-run synthesis with a tweaked prompt without re-paying
-for extraction.
+The files in `~/.ghost/` are a regenerable materialized view. You can
+re-run synthesis with a tweaked prompt without re-paying for
+extraction.
 
 A rule must show up in ≥2 conversations across ≥2 different projects
 before it becomes global. Single-project guidance lives in
 `topics/<name>.md` and loads only when you're working in that domain.
+
+A voice file is only generated for a register with at least
+2 observations across multiple conversations. So `voice/cli-chat.md`
+will fill in first (the most data), while `voice/annual-review.md`
+only appears once you've actually drafted annual reviews with Claude
+enough times to give it patterns to learn from.
 
 ## Updating the model
 
@@ -154,6 +193,8 @@ tuned knobs:
   appear before it can be global. Default 2.
 - `thresholds.rule_min_project_count` — how many different projects.
   Default 2.
+- `thresholds.voice_min_evidence_count` — how many observations
+  before a voice file is generated for a register. Default 2.
 - `batching.default_limit` — implicit `--limit` for `compose`.
 
 ## Requirements
