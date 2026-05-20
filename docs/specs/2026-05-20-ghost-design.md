@@ -64,10 +64,10 @@ conversation context.
             v
        ghost compose            (CLI, batch, out-of-band)
             |
-            +- stage 1: extract observations per transcript  [Haiku 4.5]
-            +- stage 2: cluster observations into themes     [Haiku 4.5]
-            +- stage 3: synthesize profile + rules + topics  [Opus 4.7]
-            +- stage 4: refine (Orwell pass, dedup)          [Opus 4.7]
+            +- stage 1: extract observations per transcript  [role: cheap]
+            +- stage 2: cluster observations into themes     [role: cheap]
+            +- stage 3: synthesize profile + rules + topics  [role: smart]
+            +- stage 4: refine (Orwell pass, dedup)          [role: smart]
             |
             v
 ~/.ghost/
@@ -158,9 +158,37 @@ re-paying for extraction.
 cwd into the directory name). It is the basis for cross-project
 frequency scoring in stage 3.
 
+## Configuration
+
+`~/.ghost/config.toml` is the single source of truth for tunable
+runtime values. Stages reference *roles*, not model IDs; the config
+maps roles to current model IDs. When a new model is released, you
+edit one file.
+
+```toml
+[models]
+cheap = "claude-haiku-4-5-20251001"
+smart = "claude-opus-4-7"
+
+[thresholds]
+rule_min_evidence_count = 2
+rule_min_project_count = 2
+
+[paths]
+transcripts_glob = "~/.claude/projects/**/*.jsonl"
+output_dir = "~/.ghost"
+
+[batching]
+default_limit = 0   # 0 = unlimited
+```
+
+A baked-in default config ships with the binary; `~/.ghost/config.toml`
+overrides it field-by-field. `ghost config show` prints the effective
+config. `ghost config edit` opens it in `$EDITOR`.
+
 ## Pipeline stages
 
-### Stage 1 — `extract` (per transcript, Haiku 4.5)
+### Stage 1 — `extract` (per transcript, role: cheap)
 
 Input: one transcript JSONL.
 Output: `.state/observations/<transcript_hash>.json`.
@@ -173,7 +201,7 @@ Skip the active session's transcript (detect by checking if the file
 is still being written to, or by matching against the current
 `CLAUDE_SESSION_ID` if available).
 
-### Stage 2 — `cluster` (corpus-level, Haiku 4.5)
+### Stage 2 — `cluster` (corpus-level, role: cheap)
 
 Input: all observation files concatenated.
 Output: `.state/clusters.json`.
@@ -183,7 +211,7 @@ evidence lists. This is where "I've said this 5 times across different
 sessions" becomes a strong signal versus a one-off comment. Evidence
 list length is the frequency signal stage 3 uses.
 
-### Stage 3 — `synthesize` (corpus-level, Opus 4.7)
+### Stage 3 — `synthesize` (corpus-level, role: smart)
 
 Input: clusters.
 Output: drafts of `profile.md`, `rules.md`, `index.md`, `topics/*.md`.
@@ -200,7 +228,7 @@ One Opus call per output file with the relevant cluster slice as input.
 - `index.md` is generated last: for each topic file, Opus produces
   trigger phrases that the skill uses to decide when to load.
 
-### Stage 4 — `refine` (per output file, Opus 4.7)
+### Stage 4 — `refine` (per output file, role: smart)
 
 Applies an Orwell-style pass to each generated file: delete sentences
 you wouldn't miss, kill em-dashes, strip self-congratulation, prefer
