@@ -9,3 +9,9 @@ var extractSystem string
 
 // ExtractSystem returns the system prompt used by the extract stage.
 func ExtractSystem() string { return extractSystem }
+
+//go:embed cluster.canonical.system.md
+var clusterCanonicalSystem string
+
+// ClusterCanonicalSystem returns the embedded prompt for stage 2b.
+func ClusterCanonicalSystem() string { return clusterCanonicalSystem }
