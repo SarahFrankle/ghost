@@ -24,6 +24,7 @@ import (
 	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/synthesize"
 	"github.com/SarahFrankle/ghost/internal/transcript"
 )
 
@@ -291,9 +292,48 @@ func runCluster(ctx context.Context) error {
 	return nil
 }
 
-// runSynthesize is implemented in Task 11. Stub for dispatch.
 func runSynthesize(ctx context.Context) error {
-	return fmt.Errorf("synthesize: not implemented yet")
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	outDir, err := paths.Expand(cfg.Paths.OutputDir)
+	if err != nil {
+		return err
+	}
+	stateDir := filepath.Join(outDir, ".state")
+	clustersPath := filepath.Join(stateDir, "clusters.json")
+
+	cf, err := cluster.LoadClusters(clustersPath)
+	if err != nil {
+		return fmt.Errorf("load clusters.json (run `ghost compose --stages cluster` first): %w", err)
+	}
+
+	client, err := anthropic.New()
+	if err != nil {
+		return err
+	}
+	p := &synthesize.Pipeline{
+		Client:          client,
+		SmartModel:      cfg.Models.Smart,
+		GhostDir:        outDir,
+		MinRuleEvidence: cfg.Thresholds.RuleMinEvidenceCount,
+		MinRuleProjects: cfg.Thresholds.RuleMinProjectCount,
+	}
+	if err := p.Run(ctx, cf); err != nil {
+		return err
+	}
+
+	l, err := ledger.Load(filepath.Join(stateDir, "ledger.json"))
+	if err != nil {
+		return err
+	}
+	l.SetLastCompose([]string{"synthesize"}, "")
+	if err := l.Save(filepath.Join(stateDir, "ledger.json")); err != nil {
+		return err
+	}
+	fmt.Println("synthesize: wrote identity.md, rules.md")
+	return nil
 }
 
 func loadConfig() (config.Config, error) {
