@@ -82,3 +82,45 @@ func TestVoyageReturnsErrorOn4xx(t *testing.T) {
 		t.Fatal("expected error on 401")
 	}
 }
+
+func TestOllamaEmbedHappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			t.Errorf("path = %q, want /api/embed", r.URL.Path)
+		}
+		var body struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Model != "nomic-embed-text" {
+			t.Errorf("model = %q", body.Model)
+		}
+		if len(body.Input) != 2 {
+			t.Errorf("expected 2 inputs, got %d", len(body.Input))
+		}
+		_, _ = w.Write([]byte(`{"embeddings":[[0.1,0.2],[0.3,0.4]]}`))
+	}))
+	defer srv.Close()
+
+	o := &Ollama{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	vecs, err := o.Embed(context.Background(), "nomic-embed-text", []string{"a", "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vecs) != 2 || vecs[0][0] != 0.1 || vecs[1][1] != 0.4 {
+		t.Fatalf("unexpected vectors: %v", vecs)
+	}
+}
+
+func TestOllamaErrorsOnVectorCountMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"embeddings":[[0.1]]}`))
+	}))
+	defer srv.Close()
+	o := &Ollama{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	_, err := o.Embed(context.Background(), "nomic-embed-text", []string{"a", "b"})
+	if err == nil {
+		t.Fatal("expected error when vector count != input count")
+	}
+}

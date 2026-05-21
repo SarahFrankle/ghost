@@ -246,11 +246,9 @@ func runCluster(ctx context.Context) error {
 	stateDir := filepath.Join(outDir, ".state")
 	obsDir := filepath.Join(stateDir, "observations")
 
-	emb, err := embedding.NewVoyageFromEnv()
-	if err != nil {
-		return err
-	}
-	cache, err := embedding.LoadCache(filepath.Join(stateDir, "embeddings.json"), cfg.Models.Embedding)
+	emb, embModel := selectEmbedder(cfg.Models.Embedding)
+	log.Printf("cluster: using embedder %T model=%s", emb, embModel)
+	cache, err := embedding.LoadCache(filepath.Join(stateDir, "embeddings.json"), embModel)
 	if err != nil {
 		return err
 	}
@@ -267,7 +265,7 @@ func runCluster(ctx context.Context) error {
 
 	p := &cluster.Pipeline{
 		Embedder:        emb,
-		EmbeddingModel:  cfg.Models.Embedding,
+		EmbeddingModel:  embModel,
 		Cache:           cache,
 		CacheSavePath:   filepath.Join(stateDir, "embeddings.json"),
 		ClustersPath:    filepath.Join(stateDir, "clusters.json"),
@@ -290,6 +288,23 @@ func runCluster(ctx context.Context) error {
 	}
 	fmt.Println("cluster: done")
 	return nil
+}
+
+// selectEmbedder picks an embedding backend based on environment.
+// Voyage if VOYAGE_API_KEY is set, otherwise local Ollama. Returns the
+// model name to use, since each provider has its own default model:
+// the configured cfg.Models.Embedding is used for Voyage; Ollama falls
+// back to nomic-embed-text unless OLLAMA_EMBEDDING_MODEL overrides it.
+func selectEmbedder(configuredModel string) (embedding.Embedder, string) {
+	if os.Getenv("VOYAGE_API_KEY") != "" {
+		v, _ := embedding.NewVoyageFromEnv()
+		return v, configuredModel
+	}
+	model := os.Getenv("OLLAMA_EMBEDDING_MODEL")
+	if model == "" {
+		model = "nomic-embed-text"
+	}
+	return embedding.NewOllamaFromEnv(), model
 }
 
 func runSynthesize(ctx context.Context) error {
