@@ -50,6 +50,10 @@ func (c *cliClient) Complete(ctx context.Context, model, system, user string) (s
 		"--setting-sources", "",
 		"--disable-slash-commands",
 		"--tools", "",
+		// Don't let ghost's own subprocess calls land as new transcripts under
+		// ~/.claude/projects/ — that would create a feedback loop where the
+		// next compose run extracts from ghost's own prior extractions.
+		"--no-session-persistence",
 	}
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Stdin = strings.NewReader(user)
