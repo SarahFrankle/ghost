@@ -18,7 +18,9 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/atomicfs"
+	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/internal/config"
+	"github.com/SarahFrankle/ghost/internal/embedding"
 	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
@@ -35,17 +37,35 @@ var composeCmd = &cobra.Command{
 	Use:   "compose",
 	Short: "Run the ghost compose pipeline",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		stages := strings.Split(composeStages, ",")
-		if len(stages) != 1 || stages[0] != "extract" {
-			return fmt.Errorf("phase 1 supports only --stages extract (got %q)", composeStages)
+		stages, err := parseStages(composeStages)
+		if err != nil {
+			return err
 		}
-		return runExtract(cmd.Context())
+		for _, s := range stages {
+			switch s {
+			case "extract":
+				if err := runExtract(cmd.Context()); err != nil {
+					return err
+				}
+			case "cluster":
+				if err := runCluster(cmd.Context()); err != nil {
+					return err
+				}
+			case "synthesize":
+				if err := runSynthesize(cmd.Context()); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("unknown stage %q", s)
+			}
+		}
+		return nil
 	},
 }
 
 func init() {
 	composeCmd.Flags().IntVar(&composeLimit, "limit", 0, "process at most N unprocessed transcripts (0 = all)")
-	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages (phase 1: extract only)")
+	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages: extract,cluster,synthesize, or all")
 	composeCmd.Flags().BoolVar(&composeDry, "dry-run", false, "list what would be processed and exit")
 	rootCmd.AddCommand(composeCmd)
 }
@@ -194,6 +214,86 @@ func observationsFileName(contentHash string) string {
 	}
 	sum := sha256.Sum256([]byte(contentHash))
 	return trimmed + "-" + hex.EncodeToString(sum[:4])
+}
+
+// parseStages accepts comma-separated stage names or the literal "all".
+// Order is enforced: extract → cluster → synthesize.
+func parseStages(raw string) ([]string, error) {
+	if raw == "all" {
+		return []string{"extract", "cluster", "synthesize"}, nil
+	}
+	known := map[string]int{"extract": 0, "cluster": 1, "synthesize": 2}
+	parts := strings.Split(raw, ",")
+	for _, p := range parts {
+		if _, ok := known[p]; !ok {
+			return nil, fmt.Errorf("unknown stage %q (want one of: extract, cluster, synthesize, all)", p)
+		}
+	}
+	sort.SliceStable(parts, func(i, j int) bool { return known[parts[i]] < known[parts[j]] })
+	return parts, nil
+}
+
+func runCluster(ctx context.Context) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	outDir, err := paths.Expand(cfg.Paths.OutputDir)
+	if err != nil {
+		return err
+	}
+	stateDir := filepath.Join(outDir, ".state")
+	obsDir := filepath.Join(stateDir, "observations")
+
+	emb, err := embedding.NewVoyageFromEnv()
+	if err != nil {
+		return err
+	}
+	cache, err := embedding.LoadCache(filepath.Join(stateDir, "embeddings.json"), cfg.Models.Embedding)
+	if err != nil {
+		return err
+	}
+
+	client, err := anthropic.New()
+	if err != nil {
+		return err
+	}
+	canon := &cluster.Canonicalizer{
+		Client: client,
+		Model:  cfg.Models.Cheap,
+		Log:    log.Printf,
+	}
+
+	p := &cluster.Pipeline{
+		Embedder:        emb,
+		EmbeddingModel:  cfg.Models.Embedding,
+		Cache:           cache,
+		CacheSavePath:   filepath.Join(stateDir, "embeddings.json"),
+		ClustersPath:    filepath.Join(stateDir, "clusters.json"),
+		CosineThreshold: float32(cfg.Thresholds.ClusterCosineThreshold),
+		Canonicalizer:   canon,
+		Workers:         cfg.Batching.ExtractWorkers,
+		Log:             log.Printf,
+	}
+	if err := p.Run(ctx, obsDir); err != nil {
+		return err
+	}
+
+	l, err := ledger.Load(filepath.Join(stateDir, "ledger.json"))
+	if err != nil {
+		return err
+	}
+	l.SetLastCompose([]string{"cluster"}, "")
+	if err := l.Save(filepath.Join(stateDir, "ledger.json")); err != nil {
+		return err
+	}
+	fmt.Println("cluster: done")
+	return nil
+}
+
+// runSynthesize is implemented in Task 11. Stub for dispatch.
+func runSynthesize(ctx context.Context) error {
+	return fmt.Errorf("synthesize: not implemented yet")
 }
 
 func loadConfig() (config.Config, error) {
