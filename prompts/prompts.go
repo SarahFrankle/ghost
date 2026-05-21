@@ -15,3 +15,8 @@ var clusterCanonicalSystem string
 
 // ClusterCanonicalSystem returns the embedded prompt for stage 2b.
 func ClusterCanonicalSystem() string { return clusterCanonicalSystem }
+
+//go:embed synthesize.identity.system.md
+var synthesizeIdentitySystem string
+
+func SynthesizeIdentitySystem() string { return synthesizeIdentitySystem }
