@@ -32,17 +32,24 @@ func New() (Client, error) {
 	return &cliClient{bin: bin}, nil
 }
 
-// Complete runs `claude -p --bare --model <model> --system-prompt <system>` and
-// pipes the user payload on stdin. `--bare` skips hooks, MCP, plugin sync, and
-// CLAUDE.md auto-discovery so ghost's prompt isn't contaminated by the user's
-// interactive environment.
+// Complete runs `claude -p --model <model> --system-prompt <system>` and pipes
+// the user payload on stdin. `--system-prompt` replaces the default Claude Code
+// system prompt, which prevents the user's interactive context (CLAUDE.md
+// includes, dynamic sections) from contaminating ghost's extract prompt.
+// `--bare` would also disable hooks/MCP, but it forces ANTHROPIC_API_KEY auth —
+// incompatible with the OAuth/keychain auth used by `claude` CLI subscriptions.
 func (c *cliClient) Complete(ctx context.Context, model, system, user string) (string, error) {
 	args := []string{
 		"-p",
-		"--bare",
 		"--model", model,
 		"--system-prompt", system,
 		"--output-format", "text",
+		// Isolate from the user's interactive environment so observations
+		// reflect transcript content, not the caller's shell context.
+		// --setting-sources "" disables CLAUDE.md / MEMORY.md auto-discovery.
+		"--setting-sources", "",
+		"--disable-slash-commands",
+		"--tools", "",
 	}
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Stdin = strings.NewReader(user)
