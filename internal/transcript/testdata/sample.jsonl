@@ -1,0 +1,5 @@
+{"type":"progress","data":{"hookEvent":"SessionStart"}}
+{"type":"file-history-snapshot","data":{"path":"foo.txt"}}
+{"type":"user","message":{"role":"user","content":"hello there"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi back"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"pondering"},{"type":"text","text":"second turn"}]}}
