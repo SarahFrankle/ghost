@@ -1,62 +1,56 @@
-// Package anthropic provides a small interface around the Anthropic Go SDK,
-// exposing only the single Complete operation that ghost needs. The interface
-// is kept narrow so consumers can be tested with fakes without depending on
-// the SDK's evolving surface.
+// Package anthropic provides a small Client interface around an LLM provider,
+// implemented by shelling out to the `claude` CLI. The interface stays narrow
+// (one Complete call) so tests can substitute a fake without touching the
+// process boundary.
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"os"
-
-	sdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	"os/exec"
+	"strings"
 )
 
 // Client is the minimal surface ghost needs from an LLM provider.
-// Complete sends a single (system, user) turn and returns the
-// concatenated text content of the model's response.
+// Complete sends a single (system, user) turn and returns the model's text.
 type Client interface {
 	Complete(ctx context.Context, model, system, user string) (string, error)
 }
 
-type sdkClient struct {
-	c *sdk.Client
+type cliClient struct {
+	bin string
 }
 
-// New constructs a Client backed by the official Anthropic Go SDK.
-// It returns an error if the ANTHROPIC_API_KEY environment variable is unset.
+// New constructs a Client that shells out to the `claude` CLI. It returns
+// an error if `claude` is not on PATH.
 func New() (Client, error) {
-	key := os.Getenv("ANTHROPIC_API_KEY")
-	if key == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
+	bin, err := exec.LookPath("claude")
+	if err != nil {
+		return nil, fmt.Errorf("claude CLI not found on PATH (install Claude Code, or set ANTHROPIC_API_KEY-backed alternative): %w", err)
 	}
-	c := sdk.NewClient(option.WithAPIKey(key))
-	return &sdkClient{c: &c}, nil
+	return &cliClient{bin: bin}, nil
 }
 
-// Complete issues a single Messages request with the given system prompt
-// and user message, and returns the concatenated text of all text blocks
-// in the response. Non-text blocks (e.g. thinking, tool use) are ignored.
-func (s *sdkClient) Complete(ctx context.Context, model, system, user string) (string, error) {
-	resp, err := s.c.Messages.New(ctx, sdk.MessageNewParams{
-		Model:     sdk.Model(model),
-		MaxTokens: 4096,
-		System: []sdk.TextBlockParam{
-			{Text: system},
-		},
-		Messages: []sdk.MessageParam{
-			sdk.NewUserMessage(sdk.NewTextBlock(user)),
-		},
-	})
-	if err != nil {
-		return "", err
+// Complete runs `claude -p --bare --model <model> --system-prompt <system>` and
+// pipes the user payload on stdin. `--bare` skips hooks, MCP, plugin sync, and
+// CLAUDE.md auto-discovery so ghost's prompt isn't contaminated by the user's
+// interactive environment.
+func (c *cliClient) Complete(ctx context.Context, model, system, user string) (string, error) {
+	args := []string{
+		"-p",
+		"--bare",
+		"--model", model,
+		"--system-prompt", system,
+		"--output-format", "text",
 	}
-	var out string
-	for _, blk := range resp.Content {
-		if blk.Type == "text" {
-			out += blk.Text
-		}
+	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Stdin = strings.NewReader(user)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("claude exec: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
-	return out, nil
+	return stdout.String(), nil
 }

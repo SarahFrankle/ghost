@@ -25,6 +25,9 @@ that voice contaminating Claude's normal responses.
 go install github.com/SarahFrankle/ghost@latest
 ```
 
+Ghost shells out to the `claude` CLI for LLM calls — make sure it's
+installed and logged in (`claude --version`).
+
 Then add these lines to `~/.claude/CLAUDE.md`:
 
 ```markdown
@@ -182,7 +185,8 @@ smart = "claude-opus-X-Y"
 ```
 
 No code change required. Stages reference roles (`cheap` / `smart`),
-not specific model IDs.
+not specific model IDs. Ghost passes the resolved ID through to
+`claude -p --model <id>`.
 
 ## Configuration
 
@@ -200,9 +204,10 @@ tuned knobs:
 ## Requirements
 
 - Go 1.22+
-- `ANTHROPIC_API_KEY` in your environment
-- Claude Code installed and used enough to have transcript history
-  under `~/.claude/projects/`
+- The `claude` CLI installed and logged in (ghost shells out to it,
+  reusing your Claude Code subscription)
+- Claude Code used enough to have transcript history under
+  `~/.claude/projects/`
 
 ## Not goals
 
