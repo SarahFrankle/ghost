@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
 	"github.com/SarahFrankle/ghost/internal/transcript"
@@ -57,6 +59,28 @@ var statusCmd = &cobra.Command{
 		} else {
 			fmt.Println("last compose: never")
 		}
+		stateDir := filepath.Join(outDir, ".state")
+		clustersPath := filepath.Join(stateDir, "clusters.json")
+		if info, err := os.Stat(clustersPath); err == nil {
+			cf, err := cluster.LoadClusters(clustersPath)
+			if err == nil {
+				fmt.Printf("clusters: %d (built %s, embedding=%s)\n", len(cf.Clusters), info.ModTime().Format(time.RFC3339), cf.EmbeddingModelID)
+			} else {
+				fmt.Printf("clusters: present but unreadable: %v\n", err)
+			}
+		} else {
+			fmt.Println("clusters: none (run: ghost compose --stages cluster)")
+		}
+
+		for _, name := range []string{"identity.md", "rules.md"} {
+			p := filepath.Join(outDir, name)
+			if info, err := os.Stat(p); err == nil {
+				fmt.Printf("%s: present (%d bytes, %s)\n", name, info.Size(), info.ModTime().Format(time.RFC3339))
+			} else {
+				fmt.Printf("%s: missing (run: ghost compose --stages synthesize)\n", name)
+			}
+		}
+
 		return nil
 	},
 }
