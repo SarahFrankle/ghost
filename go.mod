@@ -1,4 +1,4 @@
-module github.com/sfrankle/ghost
+module github.com/SarahFrankle/ghost
 
 go 1.25.0
 

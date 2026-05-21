@@ -22,7 +22,7 @@ that voice contaminating Claude's normal responses.
 ## Install
 
 ```bash
-go install github.com/sfrankle/ghost@latest
+go install github.com/SarahFrankle/ghost@latest
 ```
 
 Then add these lines to `~/.claude/CLAUDE.md`:

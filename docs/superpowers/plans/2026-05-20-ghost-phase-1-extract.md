@@ -76,7 +76,7 @@ Splits are by responsibility. `transcript/` owns reading; `ledger/` owns state; 
 
 ```bash
 cd /Users/sarah/dev/projects/ghost
-go mod init github.com/sfrankle/ghost
+go mod init github.com/SarahFrankle/ghost
 go get github.com/spf13/cobra@latest
 ```
 
@@ -89,7 +89,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sfrankle/ghost/cmd"
+	"github.com/SarahFrankle/ghost/cmd"
 )
 
 func main() {
@@ -1337,9 +1337,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sfrankle/ghost/internal/anthropic"
-	"github.com/sfrankle/ghost/internal/secrets"
-	"github.com/sfrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/anthropic"
+	"github.com/SarahFrankle/ghost/internal/secrets"
+	"github.com/SarahFrankle/ghost/internal/transcript"
 )
 
 // Logger is the minimal sink extract uses to report dropped records.
@@ -1449,7 +1449,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sfrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/transcript"
 )
 
 type fakeClient struct{ resp string }
@@ -1532,13 +1532,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sfrankle/ghost/internal/anthropic"
-	"github.com/sfrankle/ghost/internal/atomicfs"
-	"github.com/sfrankle/ghost/internal/config"
-	"github.com/sfrankle/ghost/internal/extract"
-	"github.com/sfrankle/ghost/internal/ledger"
-	"github.com/sfrankle/ghost/internal/paths"
-	"github.com/sfrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/anthropic"
+	"github.com/SarahFrankle/ghost/internal/atomicfs"
+	"github.com/SarahFrankle/ghost/internal/config"
+	"github.com/SarahFrankle/ghost/internal/extract"
+	"github.com/SarahFrankle/ghost/internal/ledger"
+	"github.com/SarahFrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/transcript"
 )
 
 var (
@@ -1761,9 +1761,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sfrankle/ghost/internal/ledger"
-	"github.com/sfrankle/ghost/internal/paths"
-	"github.com/sfrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/ledger"
+	"github.com/SarahFrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/transcript"
 )
 
 var statusCmd = &cobra.Command{
@@ -1849,8 +1849,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sfrankle/ghost/internal/ledger"
-	"github.com/sfrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/ledger"
+	"github.com/SarahFrankle/ghost/internal/paths"
 )
 
 var forgetCmd = &cobra.Command{
@@ -1907,9 +1907,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sfrankle/ghost/internal/extract"
-	"github.com/sfrankle/ghost/internal/ledger"
-	"github.com/sfrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/extract"
+	"github.com/SarahFrankle/ghost/internal/ledger"
+	"github.com/SarahFrankle/ghost/internal/paths"
 )
 
 var showRecent int
