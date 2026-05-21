@@ -20,3 +20,8 @@ func ClusterCanonicalSystem() string { return clusterCanonicalSystem }
 var synthesizeIdentitySystem string
 
 func SynthesizeIdentitySystem() string { return synthesizeIdentitySystem }
+
+//go:embed synthesize.rules.system.md
+var synthesizeRulesSystem string
+
+func SynthesizeRulesSystem() string { return synthesizeRulesSystem }
