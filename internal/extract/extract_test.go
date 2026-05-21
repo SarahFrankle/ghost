@@ -37,3 +37,18 @@ func TestRunDropsInvalidAndSecretObservations(t *testing.T) {
 		t.Fatalf("kept wrong observation: %+v", out.Observations[0])
 	}
 }
+
+func TestParseObservationsHandlesBracesInsideStrings(t *testing.T) {
+	// Trailing `}` inside the evidence quote previously confused the
+	// LastIndex-based span and produced malformed JSON.
+	raw := "Here is the output:\n" +
+		`{"observations":[{"kind":"rule","text":"prefer { brace } style","evidence":"turn 1: user said \"use {foo} pattern\""}]}` +
+		"\nlet me know if you want more."
+	got, err := parseObservations(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 || !strings.Contains(got[0].Text, "brace") {
+		t.Fatalf("unexpected parse result: %+v", got)
+	}
+}

@@ -170,6 +170,9 @@ func runExtract(ctx context.Context) error {
 				ObservationsFile: obsRelPath,
 				MessageCount:     len(result.Observations),
 			})
+			if err := l.Save(ledgerPath); err != nil {
+				log.Printf("ledger save after %s: %v", j.t.Path, err)
+			}
 			processed++
 			fmt.Printf("extracted %d observation(s) from %s\n", len(result.Observations), filepath.Base(j.t.Path))
 		}()

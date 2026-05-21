@@ -93,17 +93,59 @@ func renderTurns(turns []transcript.Turn) string {
 }
 
 // parseObservations is permissive about leading/trailing prose around the JSON.
+// It finds the first balanced top-level object, tracking JSON string literals
+// so braces inside quoted prose don't throw off the span.
 func parseObservations(raw string) ([]Observation, error) {
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end <= start {
+	span, ok := firstBalancedObject(raw)
+	if !ok {
 		return nil, fmt.Errorf("no JSON object found")
 	}
 	var wrap struct {
 		Observations []Observation `json:"observations"`
 	}
-	if err := json.Unmarshal([]byte(raw[start:end+1]), &wrap); err != nil {
+	if err := json.Unmarshal([]byte(span), &wrap); err != nil {
 		return nil, err
 	}
 	return wrap.Observations, nil
+}
+
+// firstBalancedObject returns the substring of raw covering the first
+// top-level `{...}` whose braces balance. It skips braces that appear
+// inside JSON string literals (handling backslash escapes).
+func firstBalancedObject(raw string) (string, bool) {
+	start := strings.Index(raw, "{")
+	if start < 0 {
+		return "", false
+	}
+	depth := 0
+	inStr := false
+	escaped := false
+	for i := start; i < len(raw); i++ {
+		c := raw[i]
+		if inStr {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch c {
+			case '\\':
+				escaped = true
+			case '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return raw[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
