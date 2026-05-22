@@ -66,6 +66,10 @@ func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash s
 			r.logf("drop: secret pattern %s in evidence", pat)
 			continue
 		}
+		if isInjectedSource(o.Evidence) {
+			r.logf("drop: evidence cites injected material, not a user turn: %q", o.Evidence)
+			continue
+		}
 		kept = append(kept, o)
 	}
 
@@ -82,6 +86,15 @@ func (r *Runner) logf(format string, args ...any) {
 	if r.Log != nil {
 		r.Log.Printf(format, args...)
 	}
+}
+
+// isInjectedSource returns true when the evidence string does not cite
+// a user turn. The extract prompt requires "turn N: <quote>"; evidence
+// in any other form (memory context, CLAUDE.md, system reminders, etc.)
+// means the model could not find a user message to support the claim.
+func isInjectedSource(evidence string) bool {
+	e := strings.ToLower(strings.TrimSpace(evidence))
+	return !strings.HasPrefix(e, "turn")
 }
 
 func renderTurns(turns []transcript.Turn) string {
