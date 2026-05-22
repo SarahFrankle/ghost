@@ -1,0 +1,9 @@
+# Compiled binary
+/ghost
+
+# Local Claude Code settings (per-machine; not shared)
+.claude/
+
+# Editor/OS junk
+.DS_Store
+*.swp
