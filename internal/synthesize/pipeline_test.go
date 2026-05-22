@@ -182,3 +182,30 @@ func (c *countingFakeClient) Complete(ctx context.Context, model, system, user s
 	c.n++
 	return c.respondAfter(c.n)
 }
+
+func TestPipelineRespectsTopicCap(t *testing.T) {
+	dir := t.TempDir()
+	f := &fakeClient{resp: "# Out\n"}
+	p := &Pipeline{
+		Client: f, SmartModel: "smart", GhostDir: dir,
+		MinRuleEvidence: 1, MinRuleProjects: 1, MaxTopicEntries: 1,
+	}
+	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
+		{Kind: "topic", SubKey: "a", Canonical: "ca", EvidenceCount: 10, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "ca", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", SubKey: "b", Canonical: "cb", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "cb", Evidence: "t", Project: "p"}}},
+	}}
+	if err := p.Run(context.Background(), cf); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "topics", "a.md")); err != nil {
+		t.Fatalf("expected topics/a.md (highest evidence): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "topics", "b.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected topics/b.md to be capped out, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "index.md")); err != nil {
+		t.Fatalf("expected index.md: %v", err)
+	}
+}

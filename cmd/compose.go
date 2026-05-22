@@ -343,6 +343,7 @@ func runSynthesize(ctx context.Context) error {
 		GhostDir:        outDir,
 		MinRuleEvidence: cfg.Thresholds.RuleMinEvidenceCount,
 		MinRuleProjects: cfg.Thresholds.RuleMinProjectCount,
+		MaxTopicEntries: cfg.Index.MaxTopicEntries,
 	}
 	if err := p.Run(ctx, cf); err != nil {
 		return err
@@ -356,7 +357,7 @@ func runSynthesize(ctx context.Context) error {
 	if err := l.Save(filepath.Join(stateDir, "ledger.json")); err != nil {
 		return err
 	}
-	fmt.Println("synthesize: wrote identity.md, rules.md")
+	fmt.Println("synthesize: wrote identity.md, rules.md, topics/*.md, index.md")
 	return nil
 }
 

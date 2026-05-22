@@ -13,31 +13,30 @@ import (
 	"github.com/SarahFrankle/ghost/internal/cluster"
 )
 
-// Pipeline orchestrates stage 3 for the always-loaded core
-// (identity.md, rules.md). Topics/voice/index are out of scope in
-// Phase 2.
+// Pipeline orchestrates stage 3: it produces identity.md, rules.md,
+// the capped set of topics/*.md, and index.md.
 //
 // Write strategy:
 //  1. Create ~/.ghost/.tmp-synthesize-<ts>/.
-//  2. Call each generator into the tmpdir.
+//  2. Call each generator into the tmpdir (top-level files plus
+//     nested topics/<slug>.md).
 //  3. If ANY generator returned an error, leave the tmpdir in place
 //     (for inspection) and return a partial-failure error. The prior
-//     generation's files in ~/.ghost/ remain authoritative.
-//  4. If all generators succeeded, rename each file from the tmpdir
-//     into ~/.ghost/ and remove the tmpdir.
+//     generation in ~/.ghost/ remains authoritative.
+//  4. If all generators succeeded, wipe ~/.ghost/topics/ (so removed
+//     topics disappear), then rename each file from the tmpdir into
+//     ~/.ghost/ and remove the tmpdir.
 //
-// POSIX has no atomic multi-file dir-merge, so step 4 renames file-by-
-// file. The order is identity.md first then rules.md so a crash mid-
-// step leaves identity stale-but-consistent rather than rules stale-
-// but-consistent. (rules.md is what changes behavior — better to have
-// the old version one cycle longer than to have rules referencing an
-// identity the model didn't see.)
+// The topics wipe runs AFTER the partial-failure gate: a failed run
+// must not destroy prior topics. POSIX has no atomic multi-file dir-
+// merge, so step 4 renames file-by-file.
 type Pipeline struct {
 	Client          anthropic.Client
 	SmartModel      string
 	GhostDir        string
 	MinRuleEvidence int
 	MinRuleProjects int
+	MaxTopicEntries int
 }
 
 func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
@@ -62,7 +61,19 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		BuildIdentity(ctx, p.Client, p.SmartModel, identityClusters),
 		BuildRules(ctx, p.Client, p.SmartModel, ruleClusters, userRules),
 	}
-	results = append(results, BuildTopics(ctx, p.Client, p.SmartModel, topicGroups)...)
+	ranked := RankTopicsByEvidence(topicGroups)
+	capped := CapTopics(ranked, p.MaxTopicEntries)
+
+	// Only generate topic files that survived the cap. A topic the
+	// index cannot reference is dead weight against the always-loaded
+	// budget.
+	keep := make(map[string][]cluster.Cluster, len(capped))
+	for _, r := range capped {
+		keep[r.Slug] = topicGroups[r.Slug]
+	}
+
+	results = append(results, BuildTopics(ctx, p.Client, p.SmartModel, keep)...)
+	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped))
 
 	var failed []string
 	for _, r := range results {
