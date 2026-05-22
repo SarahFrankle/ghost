@@ -30,3 +30,8 @@ func SynthesizeRulesSystem() string { return synthesizeRulesSystem }
 var synthesizeTopicsSystem string
 
 func SynthesizeTopicsSystem() string { return synthesizeTopicsSystem }
+
+//go:embed synthesize.index.system.md
+var synthesizeIndexSystem string
+
+func SynthesizeIndexSystem() string { return synthesizeIndexSystem }
