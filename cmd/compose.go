@@ -257,10 +257,16 @@ func runCluster(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	canonCache, err := cluster.LoadCanonicalCache(filepath.Join(stateDir, "canonical_cache.json"), cfg.Models.Cheap)
+	if err != nil {
+		return err
+	}
 	canon := &cluster.Canonicalizer{
-		Client: client,
-		Model:  cfg.Models.Cheap,
-		Log:    log.Printf,
+		Client:  client,
+		Model:   cfg.Models.Cheap,
+		Cache:   canonCache,
+		Workers: cfg.Batching.ExtractWorkers,
+		Log:     log.Printf,
 	}
 
 	p := &cluster.Pipeline{
@@ -276,6 +282,9 @@ func runCluster(ctx context.Context) error {
 	}
 	if err := p.Run(ctx, obsDir); err != nil {
 		return err
+	}
+	if err := canonCache.Save(filepath.Join(stateDir, "canonical_cache.json")); err != nil {
+		log.Printf("canonical cache save: %v", err)
 	}
 
 	l, err := ledger.Load(filepath.Join(stateDir, "ledger.json"))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
@@ -15,11 +16,16 @@ import (
 // using a cheap-model call. Single-member clusters keep their member's
 // text. Failures are non-fatal: the cluster keeps its seed text and the
 // error is reported via Log.
+//
+// Cache (optional) memoizes results by CanonicalKey across runs.
+// Workers controls how many LLM calls run concurrently (default 1).
 type Canonicalizer struct {
-	Client anthropic.Client
-	Model  string
-	Log    func(format string, args ...any)
-	OnCall func() // test hook; nil in production
+	Client  anthropic.Client
+	Model   string
+	Cache   *CanonicalCache
+	Workers int
+	Log     func(format string, args ...any)
+	OnCall  func() // test hook; nil in production
 }
 
 type canonicalResponse struct {
@@ -28,42 +34,82 @@ type canonicalResponse struct {
 }
 
 func (c *Canonicalizer) Apply(ctx context.Context, clusters []Cluster) error {
-	var total int
-	for _, cl := range clusters {
-		if len(cl.Members) >= 2 {
-			total++
-		}
-	}
-	c.logf("canonical: %d multi-member cluster(s) to phrase", total)
-	var done int
+	// First pass: cache hits resolve immediately, no LLM call needed.
+	// Collect the rest as "pending" indices to dispatch concurrently.
+	var pending []int
+	var hits int
 	for i := range clusters {
 		if len(clusters[i].Members) < 2 {
 			continue
 		}
-		if c.OnCall != nil {
-			c.OnCall()
+		if c.Cache != nil {
+			if cached, ok := c.Cache.Get(CanonicalKey(clusters[i])); ok {
+				clusters[i].Canonical = cached
+				hits++
+				continue
+			}
 		}
-		done++
-		start := time.Now()
-		c.logf("canonical: [%d/%d] %s (%d members)...", done, total, clusters[i].Kind, len(clusters[i].Members))
-		payload := renderForCanonical(clusters[i])
-		raw, err := c.Client.Complete(ctx, c.Model, prompts.ClusterCanonicalSystem(), payload)
-		if err != nil {
-			c.logf("canonical: cluster %d %s: %v", i, clusters[i].Kind, err)
-			continue
-		}
-		parsed, err := parseCanonical(raw)
-		if err != nil {
-			c.logf("canonical: cluster %d: parse: %v", i, err)
-			continue
-		}
-		if !parsed.Same || strings.TrimSpace(parsed.Canonical) == "" {
-			c.logf("canonical: cluster %d: model says members are not the same; keeping seed", i)
-			continue
-		}
-		clusters[i].Canonical = parsed.Canonical
-		c.logf("canonical: [%d/%d] done in %s", done, total, time.Since(start).Round(time.Millisecond))
+		pending = append(pending, i)
 	}
+	total := len(pending) + hits
+	c.logf("canonical: %d multi-member cluster(s) (%d cache hits, %d to phrase)", total, hits, len(pending))
+	if len(pending) == 0 {
+		return nil
+	}
+
+	workers := c.Workers
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(pending) {
+		workers = len(pending)
+	}
+
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var doneMu sync.Mutex
+	done := 0
+
+	for _, idx := range pending {
+		idx := idx
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if c.OnCall != nil {
+				c.OnCall()
+			}
+			start := time.Now()
+			doneMu.Lock()
+			done++
+			n := done
+			doneMu.Unlock()
+			c.logf("canonical: [%d/%d] %s (%d members)...", n, len(pending), clusters[idx].Kind, len(clusters[idx].Members))
+
+			payload := renderForCanonical(clusters[idx])
+			raw, err := c.Client.Complete(ctx, c.Model, prompts.ClusterCanonicalSystem(), payload)
+			if err != nil {
+				c.logf("canonical: cluster %d %s: %v", idx, clusters[idx].Kind, err)
+				return
+			}
+			parsed, err := parseCanonical(raw)
+			if err != nil {
+				c.logf("canonical: cluster %d: parse: %v", idx, err)
+				return
+			}
+			if !parsed.Same || strings.TrimSpace(parsed.Canonical) == "" {
+				c.logf("canonical: cluster %d: model says members are not the same; keeping seed", idx)
+				return
+			}
+			clusters[idx].Canonical = parsed.Canonical
+			if c.Cache != nil {
+				c.Cache.Put(CanonicalKey(clusters[idx]), parsed.Canonical)
+			}
+			c.logf("canonical: [%d/%d] done in %s", n, len(pending), time.Since(start).Round(time.Millisecond))
+		}()
+	}
+	wg.Wait()
 	return nil
 }
 
