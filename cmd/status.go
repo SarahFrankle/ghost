@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
-	"github.com/SarahFrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/source"
 )
 
 var statusCmd = &cobra.Command{
@@ -30,18 +31,20 @@ var statusCmd = &cobra.Command{
 		}
 
 		glob, _ := paths.Expand(cfg.Paths.TranscriptsGlob)
-		transcripts, err := transcript.Discover(glob, 5*time.Minute, time.Now())
+		src := source.ClaudeCode(glob)
+		ctx := context.Background()
+		convs, err := src.Discover(ctx, 5*time.Minute, time.Now())
 		if err != nil {
 			return err
 		}
 
 		var processed, pending, dirty int
-		for _, t := range transcripts {
-			h, err := transcript.ContentHash(t.Path)
+		for _, c := range convs {
+			h, err := src.ContentHash(ctx, c)
 			if err != nil {
 				continue
 			}
-			entry, ok := l.Conversations[t.Path]
+			entry, ok := l.Conversations[c.ID]
 			switch {
 			case !ok:
 				pending++
@@ -53,7 +56,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		fmt.Printf("transcripts: total=%d  processed=%d  pending=%d  dirty=%d\n",
-			len(transcripts), processed, pending, dirty)
+			len(convs), processed, pending, dirty)
 		if l.LastCompose != nil {
 			fmt.Printf("last compose: %s (stages: %v)\n", l.LastCompose.At.Format(time.RFC3339), l.LastCompose.StagesRun)
 		} else {

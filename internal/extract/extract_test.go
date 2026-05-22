@@ -4,14 +4,42 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/SarahFrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/source"
 )
 
 type fakeClient struct{ resp string }
 
 func (f *fakeClient) Complete(ctx context.Context, model, system, user string) (string, error) {
 	return f.resp, nil
+}
+
+// fakeSource returns canned turns regardless of which conversation is passed.
+// Lets extract tests verify Run's filtering logic without depending on
+// transcript wire format or real files.
+type fakeSource struct {
+	turns []source.Turn
+}
+
+func (fakeSource) Name() string { return "fake" }
+func (fakeSource) Discover(ctx context.Context, w time.Duration, now time.Time) ([]source.Conversation, error) {
+	return nil, nil
+}
+func (fakeSource) ContentHash(ctx context.Context, c source.Conversation) (string, error) {
+	return "sha256:fake", nil
+}
+func (f fakeSource) Parse(ctx context.Context, c source.Conversation) ([]source.Turn, error) {
+	return f.turns, nil
+}
+
+// turnsWithAssistant returns a minimal pair (user + assistant) so that
+// hasAssistantTurn returns true and Run proceeds into the LLM call.
+func turnsWithAssistant() []source.Turn {
+	return []source.Turn{
+		{Index: 0, Role: "user", Text: "hello"},
+		{Index: 1, Role: "assistant", Text: "hi"},
+	}
 }
 
 func TestRunDropsInvalidAndSecretObservations(t *testing.T) {
@@ -24,9 +52,9 @@ func TestRunDropsInvalidAndSecretObservations(t *testing.T) {
 	}`}
 	r := &Runner{Client: fake, Model: "test-model"}
 
-	out, err := r.Run(context.Background(), transcript.Transcript{
-		Path: "testdata/golden_transcript.jsonl", Project: "p1",
-	}, "sha256:abc")
+	src := fakeSource{turns: turnsWithAssistant()}
+	c := source.Conversation{ID: "fake://1", Project: "p1"}
+	out, err := r.Run(context.Background(), src, c, "sha256:abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,19 +67,21 @@ func TestRunDropsInvalidAndSecretObservations(t *testing.T) {
 }
 
 func TestRunSkipsTranscriptsWithoutAssistantTurn(t *testing.T) {
-	// Subagent-style transcripts contain only a dispatch prompt as text;
-	// everything else is tool_use/tool_result which Parse strips. We should
+	// Subagent-style transcripts have no assistant text turn. We must
 	// not spend a model call on them.
 	fake := &fakeClient{resp: `{"observations":[{"kind":"identity","text":"x","evidence":"turn 1: x"}]}`}
 	r := &Runner{Client: fake, Model: "test"}
-	out, err := r.Run(context.Background(), transcript.Transcript{
-		Path: "testdata/user_only_transcript.jsonl", Project: "p",
-	}, "sha256:abc")
+
+	src := fakeSource{turns: []source.Turn{
+		{Index: 0, Role: "user", Text: "hello"},
+	}}
+	c := source.Conversation{ID: "fake://user-only", Project: "p"}
+	out, err := r.Run(context.Background(), src, c, "sha256:abc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Observations) != 0 {
-		t.Fatalf("expected zero observations for user-only transcript, got %+v", out.Observations)
+		t.Fatalf("expected zero observations for user-only conversation, got %+v", out.Observations)
 	}
 }
 
@@ -66,9 +96,10 @@ func TestRunDropsObservationsCitingInjectedMaterial(t *testing.T) {
 		]
 	}`}
 	r := &Runner{Client: fake, Model: "test"}
-	out, err := r.Run(context.Background(), transcript.Transcript{
-		Path: "testdata/golden_transcript.jsonl", Project: "p",
-	}, "sha256:abc")
+
+	src := fakeSource{turns: turnsWithAssistant()}
+	c := source.Conversation{ID: "fake://2", Project: "p"}
+	out, err := r.Run(context.Background(), src, c, "sha256:abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +118,7 @@ func TestIsInjectedSource(t *testing.T) {
 		"@memory/MEMORY.md line 4":          true,
 		"@~/.ghost/rules.md says X":         true,
 		"  TURN 1: case-insensitive prefix": false,
-		"turns 3-5: range form is fine":    false,
+		"turns 3-5: range form is fine":     false,
 	}
 	for in, want := range cases {
 		if got := isInjectedSource(in); got != want {

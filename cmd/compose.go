@@ -25,8 +25,8 @@ import (
 	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/source"
 	"github.com/SarahFrankle/ghost/internal/synthesize"
-	"github.com/SarahFrankle/ghost/internal/transcript"
 )
 
 var (
@@ -110,29 +110,30 @@ func runExtract(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	transcripts, err := transcript.Discover(glob, 5*time.Minute, time.Now())
+	src := source.ClaudeCode(glob)
+	convs, err := src.Discover(ctx, 5*time.Minute, time.Now())
 	if err != nil {
 		return err
 	}
 
 	type job struct {
-		t    transcript.Transcript
+		c    source.Conversation
 		hash string
 	}
-	pending := make([]job, 0, len(transcripts))
-	for _, t := range transcripts {
-		h, err := transcript.ContentHash(t.Path)
+	pending := make([]job, 0, len(convs))
+	for _, c := range convs {
+		h, err := src.ContentHash(ctx, c)
 		if err != nil {
-			log.Printf("hash %s: %v", t.Path, err)
+			log.Printf("hash %s: %v", c.ID, err)
 			continue
 		}
-		if !l.NeedsProcessing(t.Path, h) {
+		if !l.NeedsProcessing(c.ID, h) {
 			continue
 		}
-		pending = append(pending, job{t: t, hash: h})
+		pending = append(pending, job{c: c, hash: h})
 	}
 	sort.Slice(pending, func(i, j int) bool {
-		return pending[i].t.ModTime.Before(pending[j].t.ModTime)
+		return pending[i].c.ModTime.Before(pending[j].c.ModTime)
 	})
 	if composeLimit > 0 && len(pending) > composeLimit {
 		pending = pending[:composeLimit]
@@ -141,7 +142,7 @@ func runExtract(ctx context.Context) error {
 	if composeDry {
 		fmt.Printf("would process %d transcript(s):\n", len(pending))
 		for _, p := range pending {
-			fmt.Printf("  %s\n", p.t.Path)
+			fmt.Printf("  %s\n", p.c.ID)
 		}
 		return nil
 	}
@@ -178,11 +179,11 @@ func runExtract(ctx context.Context) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result, err := runner.Run(ctx, j.t, j.hash)
+			result, err := runner.Run(ctx, src, j.c, j.hash)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				log.Printf("extract %s: %v", j.t.Path, err)
+				log.Printf("extract %s: %v", j.c.ID, err)
 				failed++
 				return
 			}
@@ -192,7 +193,7 @@ func runExtract(ctx context.Context) error {
 
 			body, err := json.MarshalIndent(result, "", "  ")
 			if err != nil {
-				log.Printf("marshal %s: %v", j.t.Path, err)
+				log.Printf("marshal %s: %v", j.c.ID, err)
 				failed++
 				return
 			}
@@ -201,16 +202,16 @@ func runExtract(ctx context.Context) error {
 				failed++
 				return
 			}
-			l.Mark(j.t.Path, ledger.Entry{
+			l.Mark(j.c.ID, ledger.Entry{
 				ContentHash:      j.hash,
 				ObservationsFile: obsRelPath,
 				MessageCount:     len(result.Observations),
 			})
 			if err := l.Save(ledgerPath); err != nil {
-				log.Printf("ledger save after %s: %v", j.t.Path, err)
+				log.Printf("ledger save after %s: %v", j.c.ID, err)
 			}
 			processed++
-			fmt.Printf("extracted %d observation(s) from %s\n", len(result.Observations), filepath.Base(j.t.Path))
+			fmt.Printf("extracted %d observation(s) from %s\n", len(result.Observations), filepath.Base(j.c.ID))
 		}()
 	}
 	wg.Wait()

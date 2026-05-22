@@ -9,7 +9,7 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/secrets"
-	"github.com/SarahFrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/source"
 )
 
 // Logger is the minimal sink extract uses to report dropped records.
@@ -28,18 +28,18 @@ type Runner struct {
 	KnownTopics []string
 }
 
-// Run extracts observations from one transcript. On success, returns
+// Run extracts observations from one conversation. On success, returns
 // a populated ObservationsFile. Malformed and secret-bearing observations
 // are dropped (logged via r.Log).
-func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash string) (ObservationsFile, error) {
-	turns, err := transcript.Parse(t.Path)
+func (r *Runner) Run(ctx context.Context, src source.Source, c source.Conversation, contentHash string) (ObservationsFile, error) {
+	turns, err := src.Parse(ctx, c)
 	if err != nil {
 		return ObservationsFile{}, err
 	}
 	if !hasAssistantTurn(turns) {
 		return ObservationsFile{
-			Source:       t.Path,
-			Project:      t.Project,
+			Source:       c.ID,
+			Project:      c.Project,
 			ContentHash:  contentHash,
 			ExtractedAt:  time.Now().UTC(),
 			Observations: []Observation{},
@@ -79,8 +79,8 @@ func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash s
 	}
 
 	return ObservationsFile{
-		Source:       t.Path,
-		Project:      t.Project,
+		Source:       c.ID,
+		Project:      c.Project,
 		ContentHash:  contentHash,
 		ExtractedAt:  time.Now().UTC(),
 		Observations: kept,
@@ -92,7 +92,7 @@ func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash s
 // substantive content is tool_use/tool_result blocks that Parse strips out;
 // running extract on them produces low-signal observations from a single
 // dispatch prompt.
-func hasAssistantTurn(turns []transcript.Turn) bool {
+func hasAssistantTurn(turns []source.Turn) bool {
 	for _, t := range turns {
 		if t.Role == "assistant" {
 			return true
@@ -116,7 +116,7 @@ func isInjectedSource(evidence string) bool {
 	return !strings.HasPrefix(e, "turn")
 }
 
-func renderPayload(knownTopics []string, turns []transcript.Turn) string {
+func renderPayload(knownTopics []string, turns []source.Turn) string {
 	var b strings.Builder
 	if len(knownTopics) > 0 {
 		b.WriteString("KNOWN TOPICS (reuse a slug verbatim if your candidate is a near-synonym):\n")

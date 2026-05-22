@@ -13,7 +13,7 @@ import (
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
 	"github.com/SarahFrankle/ghost/internal/pricing"
-	"github.com/SarahFrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/internal/source"
 )
 
 // runEstimate prints a per-stage token + cost estimate for the
@@ -45,7 +45,9 @@ func runEstimate(ctx context.Context, cfg config.Config, stages []string) error 
 
 func estimateExtract(cfg config.Config, outDir, stateDir string) error {
 	glob, _ := paths.Expand(cfg.Paths.TranscriptsGlob)
-	ts, err := transcript.Discover(glob, 0, nowFn())
+	src := source.ClaudeCode(glob)
+	ctx := context.Background()
+	convs, err := src.Discover(ctx, 0, nowFn())
 	if err != nil {
 		return err
 	}
@@ -53,15 +55,15 @@ func estimateExtract(cfg config.Config, outDir, stateDir string) error {
 
 	var bytes int64
 	pending := 0
-	for _, t := range ts {
-		h, err := transcript.ContentHash(t.Path)
+	for _, c := range convs {
+		h, err := src.ContentHash(ctx, c)
 		if err != nil {
 			continue
 		}
-		if !l.NeedsProcessing(t.Path, h) {
+		if !l.NeedsProcessing(c.ID, h) {
 			continue
 		}
-		info, err := os.Stat(t.Path)
+		info, err := os.Stat(c.ID)
 		if err != nil {
 			continue
 		}
