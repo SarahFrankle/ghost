@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -80,8 +81,64 @@ var showObservationsCmd = &cobra.Command{
 	},
 }
 
+var showCoreCmd = &cobra.Command{
+	Use:   "core",
+	Short: "Print identity.md, rules.md, and rules.user.md",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		outDir, _ := paths.Expand(cfg.Paths.OutputDir)
+		for _, name := range []string{"identity.md", "rules.md", "rules.user.md"} {
+			full := filepath.Join(outDir, name)
+			body, err := os.ReadFile(full)
+			if err != nil {
+				fmt.Printf("\n=== %s. (missing)\n", name)
+				continue
+			}
+			fmt.Printf("\n=== %s ===\n%s", name, string(body))
+		}
+		return nil
+	},
+}
+
+var showTopicsCmd = &cobra.Command{
+	Use:   "topics",
+	Short: "List topic files with last-modified",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		outDir, _ := paths.Expand(cfg.Paths.OutputDir)
+		topicsDir := filepath.Join(outDir, "topics")
+		entries, err := os.ReadDir(topicsDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Println("no topics yet")
+				return nil
+			}
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			fmt.Printf("  %-30s  %s\n", e.Name(), info.ModTime().Format(time.RFC3339))
+		}
+		return nil
+	},
+}
+
 func init() {
 	showObservationsCmd.Flags().IntVar(&showRecent, "recent", 5, "show observations from N most recent transcripts (0 = all)")
 	showCmd.AddCommand(showObservationsCmd)
+	showCmd.AddCommand(showCoreCmd)
+	showCmd.AddCommand(showTopicsCmd)
 	rootCmd.AddCommand(showCmd)
 }
