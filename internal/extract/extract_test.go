@@ -38,6 +38,23 @@ func TestRunDropsInvalidAndSecretObservations(t *testing.T) {
 	}
 }
 
+func TestRunSkipsTranscriptsWithoutAssistantTurn(t *testing.T) {
+	// Subagent-style transcripts contain only a dispatch prompt as text;
+	// everything else is tool_use/tool_result which Parse strips. We should
+	// not spend a model call on them.
+	fake := &fakeClient{resp: `{"observations":[{"kind":"identity","text":"x","evidence":"turn 1: x"}]}`}
+	r := &Runner{Client: fake, Model: "test"}
+	out, err := r.Run(context.Background(), transcript.Transcript{
+		Path: "testdata/user_only_transcript.jsonl", Project: "p",
+	}, "sha256:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Observations) != 0 {
+		t.Fatalf("expected zero observations for user-only transcript, got %+v", out.Observations)
+	}
+}
+
 func TestRunDropsObservationsCitingInjectedMaterial(t *testing.T) {
 	fake := &fakeClient{resp: `{
 		"observations": [

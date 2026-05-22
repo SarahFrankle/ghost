@@ -19,6 +19,12 @@ type Thresholds struct {
 	RuleMinProjectCount    int     `toml:"rule_min_project_count"`
 	VoiceMinEvidenceCount  int     `toml:"voice_min_evidence_count"`
 	ClusterCosineThreshold float64 `toml:"cluster_cosine_threshold"`
+	// CanonicalizeSimilarityThreshold controls how aggressive the
+	// slug-canonicalizer's embedding proposer is. Lower → more
+	// candidate groups proposed → more LLM judge calls. The judge
+	// filters false positives so a generous default is fine. Set to
+	// 0 to disable embedding-based proposals entirely.
+	CanonicalizeSimilarityThreshold float64 `toml:"canonicalize_similarity_threshold"`
 }
 
 type Paths struct {
@@ -59,7 +65,8 @@ func Defaults() Config {
 			RuleMinEvidenceCount:   2,
 			RuleMinProjectCount:    2,
 			VoiceMinEvidenceCount:  2,
-			ClusterCosineThreshold: 0.85,
+			ClusterCosineThreshold:          0.85,
+			CanonicalizeSimilarityThreshold: 0.75,
 		},
 		Paths: Paths{
 			TranscriptsGlob: "~/.claude/projects/**/*.jsonl",

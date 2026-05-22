@@ -75,6 +75,44 @@ ghost compose --limit 10 --stages extract
 ghost compose --stages cluster,synthesize,refine
 ```
 
+### Cadence: how often to run each stage
+
+The four stages have very different cost profiles and very different
+"is it worth re-running?" answers. A rough guide:
+
+| Stage | Run how often | Why |
+|---|---|---|
+| `extract` | Often. Daily or after any session worth mining. | Cheap model, per-transcript, idempotent (ledger skips unchanged transcripts), bounded by `--limit`. Running it more often means smaller batches and faster feedback. |
+| `canonicalize` | Before `cluster`, when you notice slug drift (e.g., `tests` and `testing` as separate topics in the index). | Cheap-model judge over candidate slug groups found by string similarity. Writes `.state/slug_aliases.json`. Idempotent — re-runs only re-judge new variants. Safe to skip if no drift. |
+| `cluster` | Periodically. When extract has produced a meaningful chunk of new observations (≥ a few dozen, or weekly). | Whole-corpus embedding + cluster-canonicalization pass. Reads `slug_aliases.json` and applies it at load time so aliased slugs land in the same bucket. Cheap per call but does work over everything; running it every five minutes is wasteful. |
+| `synthesize` | Sparingly. When you actually want your `~/.ghost/` files refreshed — weekly or after a cluster run you care about. | Smart model. This is the expensive step. The output is a regenerable view, so there is no cost to *delaying* a run, only to running it before the corpus has shifted enough to matter. |
+| `refine` | Same cadence as `synthesize`, or skip until you notice fluff. | Smart-model polish pass. Cheap to skip; the underlying content is already correct. |
+
+Patterns that work:
+
+- **Steady-state.** `ghost compose --stages extract` daily (or wire it
+  into a launchd/cron job). Run `ghost compose --stages cluster,synthesize`
+  weekly. Your `~/.ghost/` files lag your conversations by up to a
+  week, which is fine — these are durable preferences, not a feed.
+- **Catching up after a gap.** `ghost compose --limit 20 --stages extract`
+  repeatedly until `ghost status` is clear, then one
+  `--stages cluster,synthesize` at the end. Don't synthesize after
+  every extract batch — you'll burn smart-model tokens regenerating
+  the same files.
+- **Iterating on a prompt.** Edit a prompt under `prompts/`, then run
+  `--stages cluster,synthesize` (extract is already done; the ledger
+  protects you). The observations layer is the expensive moat; the
+  files on disk are cheap to regenerate.
+- **Re-extracting a specific transcript.** Delete its entry from
+  `.state/ledger.json` and its `.state/observations/*.json` file, then
+  re-run `--stages extract`. Useful after a prompt change that should
+  affect already-mined conversations.
+
+It is always safe to run any stage more often than recommended — the
+ledger and content-hash short-circuits keep wasted work bounded.
+Running stages *less* often is also safe; the materialized view just
+gets staler.
+
 Other useful flags:
 
 | Flag | Effect |
@@ -130,33 +168,26 @@ These three layers do different jobs. The distinction matters:
   lowercase in its own responses — it's only mirrored when Claude
   is drafting a CLI message for you.
 
-## Migrating from `~/.claude/memory/`
-
-1. Run `ghost compose` against your full transcript history.
-2. Add the four `@~/.ghost/...` includes to `~/.claude/CLAUDE.md`
-   *above* your existing `@memory/MEMORY.md` line.
-3. Keep `@memory/MEMORY.md` loaded for two weeks. Both run side by
-   side.
-4. Cross-check: anything in your hand-curated memory that ghost
-   missed? Add via `ghost add-rule` or note for prompt tuning.
-5. After two weeks of confidence, remove the `@memory/MEMORY.md`
-   line and archive the directory to `~/.claude/memory.archive/`.
-   Don't delete — it's your baseline if ghost ever regresses.
-
 ## How it works
 
-Four-stage pipeline:
+Five-stage pipeline:
 
 1. **extract** — per transcript, cheap model. Pulls atomic
    observations with evidence citations.
-2. **cluster** — corpus-level, cheap model. Groups observations, dedups
-   near-duplicates, merges evidence.
-3. **synthesize** — corpus-level, smart model. Writes draft
+2. **canonicalize** — corpus-level, cheap model. Detects near-synonym
+   topic slugs (e.g., `tests` vs `testing`) and records merges in
+   `.state/slug_aliases.json`. Observations on disk are not rewritten;
+   the alias map is applied at read time. Optional — safe to skip if
+   you don't see slug drift.
+3. **cluster** — corpus-level, cheap model. Groups observations, dedups
+   near-duplicates, merges evidence. Applies the alias map when
+   bucketing topic observations.
+4. **synthesize** — corpus-level, smart model. Writes draft
    `identity.md`, `rules.md`, `index.md`, `topics/*.md`, and
    `voice/*.md` from clusters. Rules are filtered to those appearing
    in ≥2 conversations across ≥2 projects; voice files are only
    generated for registers with enough evidence.
-4. **refine** — per output file, smart model. Orwell-style pass:
+5. **refine** — per output file, smart model. Orwell-style pass:
    delete sentences you wouldn't miss.
 
 Observations are an immutable append-only log keyed by content hash.

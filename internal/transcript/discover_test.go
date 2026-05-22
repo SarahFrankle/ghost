@@ -25,6 +25,29 @@ func TestDiscoverIgnoresRecentlyModified(t *testing.T) {
 	}
 }
 
+func TestDiscoverSkipsSubagentTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "subagents")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	top := filepath.Join(dir, "top.jsonl")
+	subagent := filepath.Join(sub, "agent-x.jsonl")
+	_ = os.WriteFile(top, []byte("{}\n"), 0o644)
+	_ = os.WriteFile(subagent, []byte("{}\n"), 0o644)
+	past := time.Now().Add(-10 * time.Minute)
+	_ = os.Chtimes(top, past, past)
+	_ = os.Chtimes(subagent, past, past)
+
+	got, err := Discover(filepath.Join(dir, "**", "*.jsonl"), 5*time.Minute, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Path != top {
+		t.Fatalf("expected only %q; got %+v", top, got)
+	}
+}
+
 func TestProjectFromPath(t *testing.T) {
 	in := "/Users/sarah/.claude/projects/-Users-sarah-dev-projects/abc.jsonl"
 	if p := projectFromPath(in); p != "Users-sarah-dev-projects" {

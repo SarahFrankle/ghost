@@ -18,6 +18,7 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/atomicfs"
+	"github.com/SarahFrankle/ghost/internal/canonicalize"
 	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/internal/config"
 	"github.com/SarahFrankle/ghost/internal/embedding"
@@ -56,6 +57,10 @@ var composeCmd = &cobra.Command{
 				if err := runExtract(cmd.Context()); err != nil {
 					return err
 				}
+			case "canonicalize":
+				if err := runCanonicalize(cmd.Context()); err != nil {
+					return err
+				}
 			case "cluster":
 				if err := runCluster(cmd.Context()); err != nil {
 					return err
@@ -74,7 +79,7 @@ var composeCmd = &cobra.Command{
 
 func init() {
 	composeCmd.Flags().IntVar(&composeLimit, "limit", 0, "process at most N unprocessed transcripts (0 = all)")
-	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages: extract,cluster,synthesize, or all")
+	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages: extract,canonicalize,cluster,synthesize, or all")
 	composeCmd.Flags().BoolVar(&composeDry, "dry-run", false, "list what would be processed and exit")
 	composeCmd.Flags().BoolVar(&composeEstimate, "estimate", false, "print per-stage token + cost estimate and exit")
 	rootCmd.AddCommand(composeCmd)
@@ -150,9 +155,10 @@ func runExtract(ctx context.Context) error {
 		return err
 	}
 	runner := &extract.Runner{
-		Client: client,
-		Model:  cfg.Models.Cheap,
-		Log:    log.Default(),
+		Client:      client,
+		Model:       cfg.Models.Cheap,
+		Log:         log.Default(),
+		KnownTopics: listKnownTopics(outDir),
 	}
 
 	workers := cfg.Batching.ExtractWorkers
@@ -217,6 +223,27 @@ func runExtract(ctx context.Context) error {
 	return nil
 }
 
+// listKnownTopics returns the slugs of existing topic files (basename without
+// extension) under outDir/topics, sorted. Used to bias the extract prompt
+// toward reusing existing slugs instead of minting near-synonym variants.
+// A missing or unreadable topics dir is treated as "no known topics".
+func listKnownTopics(outDir string) []string {
+	entries, err := os.ReadDir(filepath.Join(outDir, "topics"))
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		out = append(out, strings.TrimSuffix(name, ".md"))
+	}
+	sort.Strings(out)
+	return out
+}
+
 func observationsFileName(contentHash string) string {
 	trimmed := strings.TrimPrefix(contentHash, "sha256:")
 	if len(trimmed) > 16 {
@@ -230,17 +257,104 @@ func observationsFileName(contentHash string) string {
 // Order is enforced: extract → cluster → synthesize.
 func parseStages(raw string) ([]string, error) {
 	if raw == "all" {
-		return []string{"extract", "cluster", "synthesize"}, nil
+		return []string{"extract", "canonicalize", "cluster", "synthesize"}, nil
 	}
-	known := map[string]int{"extract": 0, "cluster": 1, "synthesize": 2}
+	known := map[string]int{"extract": 0, "canonicalize": 1, "cluster": 2, "synthesize": 3}
 	parts := strings.Split(raw, ",")
 	for _, p := range parts {
 		if _, ok := known[p]; !ok {
-			return nil, fmt.Errorf("unknown stage %q (want one of: extract, cluster, synthesize, all)", p)
+			return nil, fmt.Errorf("unknown stage %q (want one of: extract, canonicalize, cluster, synthesize, all)", p)
 		}
 	}
 	sort.SliceStable(parts, func(i, j int) bool { return known[parts[i]] < known[parts[j]] })
 	return parts, nil
+}
+
+func runCanonicalize(ctx context.Context) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	outDir, err := paths.Expand(cfg.Paths.OutputDir)
+	if err != nil {
+		return err
+	}
+	stateDir := filepath.Join(outDir, ".state")
+	obsDir := filepath.Join(stateDir, "observations")
+	aliasesPath := filepath.Join(stateDir, "slug_aliases.json")
+
+	slugSamples, err := observedTopicSlugSamples(obsDir)
+	if err != nil {
+		return err
+	}
+	if len(slugSamples) < 2 {
+		fmt.Printf("canonicalize: %d distinct topic slug(s); nothing to do\n", len(slugSamples))
+		return nil
+	}
+
+	existing, err := canonicalize.Load(aliasesPath)
+	if err != nil {
+		return fmt.Errorf("load aliases: %w", err)
+	}
+
+	client, err := anthropic.New()
+	if err != nil {
+		return err
+	}
+	emb, embModel := selectEmbedder(cfg.Models.Embedding)
+	p := &canonicalize.Pipeline{
+		Client:              client,
+		Model:               cfg.Models.Cheap,
+		Log:                 log.Printf,
+		Embedder:            emb,
+		EmbeddingModel:      embModel,
+		SimilarityThreshold: float32(cfg.Thresholds.CanonicalizeSimilarityThreshold),
+	}
+	merged, err := p.Run(ctx, slugSamples, existing)
+	if err != nil {
+		return err
+	}
+
+	if err := canonicalize.Save(aliasesPath, cfg.Models.Cheap, merged); err != nil {
+		return fmt.Errorf("save aliases: %w", err)
+	}
+	fmt.Printf("canonicalize: %d alias(es) total; wrote %s\n", len(merged), aliasesPath)
+	return nil
+}
+
+// observedTopicSlugSamples reads every observations JSON under obsDir
+// and returns slug → sample observation texts for topic-kind
+// observations. The samples drive the canonicalizer's embedding
+// fingerprints; the slug set is the same as before but now carries
+// signal about what each slug actually contains.
+func observedTopicSlugSamples(obsDir string) (map[string][]string, error) {
+	entries, err := os.ReadDir(obsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(obsDir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var f extract.ObservationsFile
+		if err := json.Unmarshal(b, &f); err != nil {
+			return nil, fmt.Errorf("decode %s: %w", e.Name(), err)
+		}
+		for _, o := range f.Observations {
+			if o.Kind == "topic" && o.Topic != "" {
+				out[o.Topic] = append(out[o.Topic], o.Text)
+			}
+		}
+	}
+	return out, nil
 }
 
 func runCluster(ctx context.Context) error {
@@ -278,6 +392,11 @@ func runCluster(ctx context.Context) error {
 		Log:     log.Printf,
 	}
 
+	aliases, err := canonicalize.Load(filepath.Join(stateDir, "slug_aliases.json"))
+	if err != nil {
+		return fmt.Errorf("load slug aliases: %w", err)
+	}
+
 	p := &cluster.Pipeline{
 		Embedder:        emb,
 		EmbeddingModel:  embModel,
@@ -288,6 +407,7 @@ func runCluster(ctx context.Context) error {
 		Canonicalizer:   canon,
 		Workers:         cfg.Batching.ExtractWorkers,
 		Log:             log.Printf,
+		TopicAliases:    aliases,
 	}
 	if err := p.Run(ctx, obsDir); err != nil {
 		return err

@@ -21,6 +21,11 @@ type Runner struct {
 	Client anthropic.Client
 	Model  string
 	Log    Logger
+	// KnownTopics is the sorted list of topic slugs that already exist on
+	// disk. The extract prompt receives these as a KNOWN TOPICS block and
+	// is instructed to reuse an existing slug when a candidate is a
+	// near-synonym, closing the slug-drift feedback loop.
+	KnownTopics []string
 }
 
 // Run extracts observations from one transcript. On success, returns
@@ -31,7 +36,7 @@ func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash s
 	if err != nil {
 		return ObservationsFile{}, err
 	}
-	if len(turns) == 0 {
+	if !hasAssistantTurn(turns) {
 		return ObservationsFile{
 			Source:       t.Path,
 			Project:      t.Project,
@@ -41,7 +46,7 @@ func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash s
 		}, nil
 	}
 
-	userPayload := renderTurns(turns)
+	userPayload := renderPayload(r.KnownTopics, turns)
 	raw, err := r.Client.Complete(ctx, r.Model, SystemPrompt(), userPayload)
 	if err != nil {
 		return ObservationsFile{}, fmt.Errorf("anthropic: %w", err)
@@ -82,6 +87,20 @@ func (r *Runner) Run(ctx context.Context, t transcript.Transcript, contentHash s
 	}, nil
 }
 
+// hasAssistantTurn reports whether turns contains at least one assistant
+// text turn. Transcripts without one are typically subagent-style runs whose
+// substantive content is tool_use/tool_result blocks that Parse strips out;
+// running extract on them produces low-signal observations from a single
+// dispatch prompt.
+func hasAssistantTurn(turns []transcript.Turn) bool {
+	for _, t := range turns {
+		if t.Role == "assistant" {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Runner) logf(format string, args ...any) {
 	if r.Log != nil {
 		r.Log.Printf(format, args...)
@@ -97,8 +116,15 @@ func isInjectedSource(evidence string) bool {
 	return !strings.HasPrefix(e, "turn")
 }
 
-func renderTurns(turns []transcript.Turn) string {
+func renderPayload(knownTopics []string, turns []transcript.Turn) string {
 	var b strings.Builder
+	if len(knownTopics) > 0 {
+		b.WriteString("KNOWN TOPICS (reuse a slug verbatim if your candidate is a near-synonym):\n")
+		for _, s := range knownTopics {
+			fmt.Fprintf(&b, "- %s\n", s)
+		}
+		b.WriteString("\nTRANSCRIPT:\n")
+	}
 	for _, t := range turns {
 		fmt.Fprintf(&b, "turn %d (%s): %s\n", t.Index, t.Role, t.Text)
 	}

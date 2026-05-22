@@ -26,6 +26,12 @@ type Pipeline struct {
 	Canonicalizer   *Canonicalizer
 	Workers         int
 	Log             func(format string, args ...any)
+	// TopicAliases, if non-nil, rewrites each observation's Topic via
+	// its Resolve method before bucketing. Observations on disk are
+	// untouched. A nil or empty map is a no-op.
+	TopicAliases interface {
+		Resolve(string) string
+	}
 }
 
 func (p *Pipeline) logf(format string, args ...any) {
@@ -38,6 +44,13 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 	members, err := loadAllObservations(observationsDir)
 	if err != nil {
 		return fmt.Errorf("load observations: %w", err)
+	}
+	if p.TopicAliases != nil {
+		for i := range members {
+			if members[i].Kind == "topic" {
+				members[i].Topic = p.TopicAliases.Resolve(members[i].Topic)
+			}
+		}
 	}
 	if len(members) == 0 {
 		return SaveClusters(p.ClustersPath, ClustersFile{

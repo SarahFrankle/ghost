@@ -35,3 +35,11 @@ func SynthesizeTopicsSystem() string { return synthesizeTopicsSystem }
 var synthesizeIndexSystem string
 
 func SynthesizeIndexSystem() string { return synthesizeIndexSystem }
+
+//go:embed canonicalize.slug.system.md
+var canonicalizeSlugSystem string
+
+// CanonicalizeSlugSystem returns the prompt used by the slug
+// canonicalization stage to decide whether a candidate group of slugs
+// describes the same topic and which one to keep.
+func CanonicalizeSlugSystem() string { return canonicalizeSlugSystem }

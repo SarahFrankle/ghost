@@ -3,6 +3,7 @@ package transcript
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,9 @@ func Discover(glob string, activeWindow time.Duration, now time.Time) ([]Transcr
 	cutoff := now.Add(-activeWindow)
 	out := make([]Transcript, 0, len(matches))
 	for _, p := range matches {
+		if isSubagentTranscript(p) {
+			continue
+		}
 		fi, err := osStat(p)
 		if err != nil {
 			continue
@@ -42,6 +46,14 @@ func Discover(glob string, activeWindow time.Duration, now time.Time) ([]Transcr
 		})
 	}
 	return out, nil
+}
+
+// isSubagentTranscript reports whether p lives under a `subagents/` directory.
+// Claude Code writes dispatched subagent sessions there; their JSONL is
+// dominated by tool_use/tool_result blocks and parses down to the single
+// dispatch prompt, which is not a real conversation worth mining.
+func isSubagentTranscript(p string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(p), "/"), "subagents")
 }
 
 // projectFromPath extracts the project segment from a Claude Code transcript path.
