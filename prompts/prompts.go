@@ -25,3 +25,8 @@ func SynthesizeIdentitySystem() string { return synthesizeIdentitySystem }
 var synthesizeRulesSystem string
 
 func SynthesizeRulesSystem() string { return synthesizeRulesSystem }
+
+//go:embed synthesize.topics.system.md
+var synthesizeTopicsSystem string
+
+func SynthesizeTopicsSystem() string { return synthesizeTopicsSystem }
