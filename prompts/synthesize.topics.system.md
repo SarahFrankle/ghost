@@ -19,7 +19,7 @@ Hard rules:
   paraphrase away the user's specificity.
 - No em-dashes. No throat-clearing. Delete sentences you wouldn't
   miss.
-- Single-project topics are valid — do not refuse to write a topic
+- Single-project topics are valid. Do not refuse to write a topic
   just because every cluster is from one project. Cross-project
   signal is enforced upstream by the rules-vs-topics split, not by
   you.
