@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/prompts"
@@ -27,6 +28,14 @@ type canonicalResponse struct {
 }
 
 func (c *Canonicalizer) Apply(ctx context.Context, clusters []Cluster) error {
+	var total int
+	for _, cl := range clusters {
+		if len(cl.Members) >= 2 {
+			total++
+		}
+	}
+	c.logf("canonical: %d multi-member cluster(s) to phrase", total)
+	var done int
 	for i := range clusters {
 		if len(clusters[i].Members) < 2 {
 			continue
@@ -34,6 +43,9 @@ func (c *Canonicalizer) Apply(ctx context.Context, clusters []Cluster) error {
 		if c.OnCall != nil {
 			c.OnCall()
 		}
+		done++
+		start := time.Now()
+		c.logf("canonical: [%d/%d] %s (%d members)...", done, total, clusters[i].Kind, len(clusters[i].Members))
 		payload := renderForCanonical(clusters[i])
 		raw, err := c.Client.Complete(ctx, c.Model, prompts.ClusterCanonicalSystem(), payload)
 		if err != nil {
@@ -50,6 +62,7 @@ func (c *Canonicalizer) Apply(ctx context.Context, clusters []Cluster) error {
 			continue
 		}
 		clusters[i].Canonical = parsed.Canonical
+		c.logf("canonical: [%d/%d] done in %s", done, total, time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }
