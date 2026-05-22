@@ -23,17 +23,22 @@ import (
 	"github.com/SarahFrankle/ghost/internal/config"
 	"github.com/SarahFrankle/ghost/internal/embedding"
 	"github.com/SarahFrankle/ghost/internal/extract"
+	"github.com/SarahFrankle/ghost/internal/fingerprint"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
 	"github.com/SarahFrankle/ghost/internal/source"
 	"github.com/SarahFrankle/ghost/internal/synthesize"
+	"github.com/SarahFrankle/ghost/prompts"
 )
 
 var (
-	composeLimit    int
-	composeStages   string
-	composeDry      bool
-	composeEstimate bool
+	composeLimit     int
+	composeStages    string
+	composeDry       bool
+	composeEstimate  bool
+	composeReobserve bool
+	composeRecluster bool
+	composeResynth   bool
 )
 
 var composeCmd = &cobra.Command{
@@ -82,6 +87,9 @@ func init() {
 	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages: extract,canonicalize,cluster,synthesize, or all")
 	composeCmd.Flags().BoolVar(&composeDry, "dry-run", false, "list what would be processed and exit")
 	composeCmd.Flags().BoolVar(&composeEstimate, "estimate", false, "print per-stage token + cost estimate and exit")
+	composeCmd.Flags().BoolVar(&composeReobserve, "reobserve", false, "force re-extract of all transcripts, skipping fingerprint cache")
+	composeCmd.Flags().BoolVar(&composeRecluster, "recluster", false, "force rebuild of clusters.json, skipping fingerprint cache")
+	composeCmd.Flags().BoolVar(&composeResynth, "resynth", false, "force re-synthesis of identity/rules/topics/index, skipping fingerprint cache")
 	rootCmd.AddCommand(composeCmd)
 }
 
@@ -127,10 +135,17 @@ func runExtract(ctx context.Context) error {
 			log.Printf("hash %s: %v", c.ID, err)
 			continue
 		}
-		if !l.NeedsProcessing(c.ID, h) {
+		if composeReobserve {
+			pending = append(pending, job{c: c, hash: h})
 			continue
 		}
-		pending = append(pending, job{c: c, hash: h})
+		if l.NeedsProcessing(c.ID, h) {
+			pending = append(pending, job{c: c, hash: h})
+			continue
+		}
+		if observationsStale(outDir, l, c.ID, c.Source, c.Project, h, cfg.Models.Cheap) {
+			pending = append(pending, job{c: c, hash: h})
+		}
 	}
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].c.ModTime.Before(pending[j].c.ModTime)
@@ -243,6 +258,28 @@ func listKnownTopics(outDir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// observationsStale reports whether the cached observations file for convID
+// is missing or carries a fingerprint that no longer matches the current
+// source / prompt / model. A stale (or missing) file means the transcript
+// should be re-extracted even though its content hash hasn't changed.
+func observationsStale(outDir string, l *ledger.Ledger, convID, sourceName, project, contentHash, model string) bool {
+	entry, ok := l.Get(convID)
+	if !ok || entry.ObservationsFile == "" {
+		return true
+	}
+	absPath := filepath.Join(outDir, entry.ObservationsFile)
+	b, err := os.ReadFile(absPath)
+	if err != nil {
+		return true
+	}
+	var f extract.ObservationsFile
+	if err := json.Unmarshal(b, &f); err != nil {
+		return true
+	}
+	want := extract.ObservationsFingerprint(sourceName, project, contentHash, model)
+	return f.Fingerprint != want
 }
 
 func observationsFileName(contentHash string) string {
@@ -369,6 +406,32 @@ func runCluster(ctx context.Context) error {
 	}
 	stateDir := filepath.Join(outDir, ".state")
 	obsDir := filepath.Join(stateDir, "observations")
+	clustersPath := filepath.Join(stateDir, "clusters.json")
+
+	obsFingerprints, err := cluster.ObservationsFingerprints(obsDir)
+	if err != nil {
+		return fmt.Errorf("scan observations fingerprints: %w", err)
+	}
+	embModelForFP := cfg.Models.Embedding
+	if os.Getenv("VOYAGE_API_KEY") == "" {
+		embModelForFP = os.Getenv("OLLAMA_EMBEDDING_MODEL")
+		if embModelForFP == "" {
+			embModelForFP = "nomic-embed-text"
+		}
+	}
+	expectedFP := cluster.ClustersFingerprint(
+		obsFingerprints,
+		embModelForFP,
+		cfg.Models.Cheap,
+		prompts.ClusterCanonicalSystemHash(),
+		float32(cfg.Thresholds.ClusterCosineThreshold),
+	)
+	if !composeRecluster {
+		if existing, err := cluster.LoadClusters(clustersPath); err == nil && existing.Fingerprint == expectedFP {
+			fmt.Println("cluster: up to date (fingerprint match)")
+			return nil
+		}
+	}
 
 	emb, embModel := selectEmbedder(cfg.Models.Embedding)
 	log.Printf("cluster: using embedder %T model=%s", emb, embModel)
@@ -403,12 +466,13 @@ func runCluster(ctx context.Context) error {
 		EmbeddingModel:  embModel,
 		Cache:           cache,
 		CacheSavePath:   filepath.Join(stateDir, "embeddings.json"),
-		ClustersPath:    filepath.Join(stateDir, "clusters.json"),
+		ClustersPath:    clustersPath,
 		CosineThreshold: float32(cfg.Thresholds.ClusterCosineThreshold),
 		Canonicalizer:   canon,
 		Workers:         cfg.Batching.ExtractWorkers,
 		Log:             log.Printf,
 		TopicAliases:    aliases,
+		Fingerprint:     expectedFP,
 	}
 	if err := p.Run(ctx, obsDir); err != nil {
 		return err
@@ -463,6 +527,13 @@ func runSynthesize(ctx context.Context) error {
 		return fmt.Errorf("load clusters.json (run `ghost compose --stages cluster` first): %w", err)
 	}
 
+	expectedFP := synthesizeFingerprint(cf.Fingerprint, cfg.Models.Smart, cfg.Thresholds.RuleMinEvidenceCount, cfg.Thresholds.RuleMinProjectCount, cfg.Index.MaxTopicEntries)
+	sidecarPath := filepath.Join(stateDir, "synthesize.fingerprint")
+	if !composeResynth && synthesizeOutputsFresh(outDir, sidecarPath, expectedFP) {
+		fmt.Println("synthesize: up to date (fingerprint match)")
+		return nil
+	}
+
 	client, err := anthropic.New()
 	if err != nil {
 		return err
@@ -478,6 +549,9 @@ func runSynthesize(ctx context.Context) error {
 	if err := p.Run(ctx, cf); err != nil {
 		return err
 	}
+	if err := os.WriteFile(sidecarPath, []byte(expectedFP), 0o644); err != nil {
+		log.Printf("synthesize: write fingerprint sidecar: %v", err)
+	}
 
 	l, err := ledger.Load(filepath.Join(stateDir, "ledger.json"))
 	if err != nil {
@@ -489,6 +563,46 @@ func runSynthesize(ctx context.Context) error {
 	}
 	fmt.Println("synthesize: wrote identity.md, rules.md, topics/*.md, index.md")
 	return nil
+}
+
+// synthesizeFingerprint composes the cache key for synthesize outputs.
+// Inputs: the clusters.json fingerprint (which already captures observation
+// state, embedding model, and canonicalizer prompt/model), the smart model,
+// the four synth prompts, and the structural thresholds that change which
+// clusters survive to be rendered.
+func synthesizeFingerprint(clustersFP, smartModel string, minRuleEvidence, minRuleProjects, maxTopicEntries int) string {
+	return fingerprint.Compute(
+		"synthesize/v1",
+		clustersFP,
+		smartModel,
+		prompts.SynthesizeIdentitySystemHash(),
+		prompts.SynthesizeRulesSystemHash(),
+		prompts.SynthesizeTopicsSystemHash(),
+		prompts.SynthesizeIndexSystemHash(),
+		fmt.Sprintf("rule_evidence=%d", minRuleEvidence),
+		fmt.Sprintf("rule_projects=%d", minRuleProjects),
+		fmt.Sprintf("max_topics=%d", maxTopicEntries),
+	)
+}
+
+// synthesizeOutputsFresh reports whether the sidecar fingerprint at
+// sidecarPath matches expectedFP AND the load-bearing synthesized files
+// exist on disk. The file existence check guards against the case where
+// outputs were manually deleted but the sidecar remains.
+func synthesizeOutputsFresh(outDir, sidecarPath, expectedFP string) bool {
+	b, err := os.ReadFile(sidecarPath)
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(string(b)) != expectedFP {
+		return false
+	}
+	for _, name := range []string{"identity.md", "rules.md", "index.md"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func loadConfig() (config.Config, error) {

@@ -81,6 +81,15 @@ func (l *Ledger) Mark(path string, e Entry) {
 	l.Conversations[path] = e
 }
 
+// Get returns the entry for path and whether it exists. Safe for concurrent
+// use; callers should not mutate the returned entry.
+func (l *Ledger) Get(path string) (Entry, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, ok := l.Conversations[path]
+	return e, ok
+}
+
 func (l *Ledger) NeedsProcessing(path, contentHash string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

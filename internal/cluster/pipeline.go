@@ -32,6 +32,11 @@ type Pipeline struct {
 	TopicAliases interface {
 		Resolve(string) string
 	}
+	// Fingerprint, if non-empty, is written to the resulting clusters.json
+	// so subsequent runs can detect whether inputs / prompts / models have
+	// changed without rebuilding. Callers compute the expected value with
+	// the same inputs and compare against the on-disk file.
+	Fingerprint string
 }
 
 func (p *Pipeline) logf(format string, args ...any) {
@@ -80,6 +85,7 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 		SchemaVersion:    SchemaVersion,
 		EmbeddingModelID: p.EmbeddingModel,
 		BuiltAt:          time.Now().UTC(),
+		Fingerprint:      p.Fingerprint,
 		Clusters:         clusters,
 	})
 }

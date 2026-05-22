@@ -27,12 +27,7 @@ func (s *claudeCodeSource) Discover(ctx context.Context, activeWindow time.Durat
 	}
 	out := make([]Conversation, 0, len(ts))
 	for _, t := range ts {
-		out = append(out, Conversation{
-			ID:      t.Path,
-			Source:  s.Name(),
-			Project: t.Project,
-			ModTime: t.ModTime,
-		})
+		out = append(out, NewConversation(s, t.Path, t.Project, t.ModTime))
 	}
 	return out, nil
 }

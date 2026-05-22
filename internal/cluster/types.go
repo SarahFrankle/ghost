@@ -43,5 +43,6 @@ type ClustersFile struct {
 	SchemaVersion    int       `json:"schema_version"`
 	EmbeddingModelID string    `json:"embedding_model_id"`
 	BuiltAt          time.Time `json:"built_at"`
+	Fingerprint      string    `json:"fingerprint,omitempty"`
 	Clusters         []Cluster `json:"clusters"`
 }

@@ -8,9 +8,26 @@ import (
 	"time"
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
+	"github.com/SarahFrankle/ghost/internal/fingerprint"
 	"github.com/SarahFrankle/ghost/internal/secrets"
 	"github.com/SarahFrankle/ghost/internal/source"
+	"github.com/SarahFrankle/ghost/prompts"
 )
+
+// ObservationsFingerprint returns the cache key for an observations file
+// built from these inputs. Callers compute the expected fingerprint with
+// the same arguments and compare it against the on-disk file; mismatch
+// means a prompt, model, or input change and the file must be rebuilt.
+func ObservationsFingerprint(sourceName, project, contentHash, model string) string {
+	return fingerprint.Compute(
+		"extract/v1",
+		sourceName,
+		project,
+		contentHash,
+		prompts.ExtractSystemHash(),
+		model,
+	)
+}
 
 // Logger is the minimal sink extract uses to report dropped records.
 type Logger interface {
@@ -36,12 +53,14 @@ func (r *Runner) Run(ctx context.Context, src source.Source, c source.Conversati
 	if err != nil {
 		return ObservationsFile{}, err
 	}
+	fp := ObservationsFingerprint(c.Source, c.Project, contentHash, r.Model)
 	if !hasAssistantTurn(turns) {
 		return ObservationsFile{
 			Source:       c.ID,
 			Project:      c.Project,
 			ContentHash:  contentHash,
 			ExtractedAt:  time.Now().UTC(),
+			Fingerprint:  fp,
 			Observations: []Observation{},
 		}, nil
 	}
@@ -83,6 +102,7 @@ func (r *Runner) Run(ctx context.Context, src source.Source, c source.Conversati
 		Project:      c.Project,
 		ContentHash:  contentHash,
 		ExtractedAt:  time.Now().UTC(),
+		Fingerprint:  fp,
 		Observations: kept,
 	}, nil
 }

@@ -20,6 +20,7 @@ type ObservationsFile struct {
 	Project      string        `json:"project"`
 	ContentHash  string        `json:"content_hash"`
 	ExtractedAt  time.Time     `json:"extracted_at"`
+	Fingerprint  string        `json:"fingerprint,omitempty"`
 	Observations []Observation `json:"observations"`
 }
 

@@ -18,6 +18,12 @@ type Conversation struct {
 	ModTime time.Time
 }
 
+// NewConversation builds a Conversation with Source stamped from src.Name(),
+// so callers cannot accidentally diverge the field from the producing source.
+func NewConversation(src Source, id, project string, modTime time.Time) Conversation {
+	return Conversation{ID: id, Source: src.Name(), Project: project, ModTime: modTime}
+}
+
 // Turn is one user/assistant message after parsing.
 type Turn struct {
 	Index int
