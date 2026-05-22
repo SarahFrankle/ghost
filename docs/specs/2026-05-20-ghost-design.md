@@ -22,10 +22,11 @@ Claude stays a generalist; identity sharpens context, rules govern
 behavior, voice files exist only to be referenced when ghostwriting
 on your behalf.
 
-The shape of the output is inspired by `muse`, but ghost is a rewrite
-with a different target: token economy at runtime, batching at compose
-time, and a clear split between immutable observations and regenerable
-synthesis.
+The architecture has three load-bearing choices: token economy at
+runtime (always-loaded files stay small and capped), batching at
+compose time (synthesis runs out-of-band, not in-session), and a
+clear split between immutable observations and regenerable synthesis
+(so prompt tuning is cheap).
 
 ## Goals
 
@@ -102,22 +103,26 @@ conversation context.
        ghost compose            (CLI, batch, out-of-band)
             |
             +- stage 1: extract observations per transcript            [role: cheap]
-            +- stage 2: cluster observations by kind / topic / context [role: cheap]
+            +- stage 2: cluster                                        [embeddings + cheap LLM]
+            |     2a: embedding-bucket by (kind, sub-key)              [deterministic, Go]
+            |     2b: LLM picks canonical phrasing per multi-entry bucket [role: cheap]
+            |     2c: count evidence + distinct projects               [deterministic, Go]
             +- stage 3: synthesize identity + rules + topics + voice   [role: smart]
-            +- stage 4: refine (Orwell pass, dedup)                    [role: smart]
+            |     partial failures write what succeeded.
             |
             v
 ~/.ghost/
   identity.md                  (always loaded; third-person context about user)
   rules.md                     (always loaded; how Claude should behave)
   rules.user.md                (always loaded; manual rules, survives recompose)
-  index.md                     (always loaded; triggers for topics AND voice)
+  index.md                     (always loaded; capped; triggers for topics AND voice)
   topics/*.md                  (lazy; deeper guidance per domain)
   voice/*.md                   (lazy; per-register ghostwriting reference)
   .state/
-    ledger.json                (processed conversations + content hash)
+    ledger.json                (schema_version, prompts_version, processed conversations + hash)
     observations/*.json        (per-transcript, append-only in practice)
     clusters.json              (stage 2 output, regenerable)
+    embeddings.json            (stage 2a cache, regenerable)
 ```
 
 ### Wiring into Claude Code
@@ -152,10 +157,28 @@ prunes with `ghost forget`.
 
 **Synthesis** (`identity.md`, `rules.md`, `index.md`, `topics/*.md`,
 `voice/*.md`) is the distilled view derived from the observations
-corpus. Fully
-regenerable: stages 2–4 reread the whole corpus and rewrite synthesis
-from scratch. This is event sourcing — observations are the immutable
-log, synthesis is the materialized view.
+corpus. Fully regenerable: stages 2–3 reread the whole corpus and
+rewrite synthesis from scratch. This is event sourcing — observations
+are the immutable log, synthesis is the materialized view.
+
+Between observations and synthesis sits an intermediate shape:
+**cluster members**. Each cluster carries a list of `ClusterMember`
+records, each identifying a source observation by
+`(content_hash, observation_index, project)` — `content_hash` names
+the transcript's observations file and `observation_index` is the
+position of the observation within that file's `observations` array.
+The LLM chooses the canonical phrasing of a cluster, but the
+*members* of a cluster come from deterministic embedding-based
+bucketing, and frequency counts (evidence count, distinct project
+count) are computed in Go from the member list — never from anything
+the LLM emits.
+
+Why counts are Go-side: counts gate threshold-based promotion (a
+rule needs ≥2 evidence across ≥2 projects to land in `rules.md`).
+Delegating those counts to a non-deterministic model would let prompt
+drift silently move rules in and out of the always-loaded core
+between compose runs. Keeping the count deterministic also preserves
+the audit trail from any rendered rule back to its originating turns.
 
 The split matters because LLM synthesis is non-deterministic. You want
 to be able to tweak a synthesis prompt and rebuild the view without
@@ -212,18 +235,28 @@ edit one file.
 [models]
 cheap = "claude-haiku-4-5-20251001"
 smart = "claude-opus-4-7"
+embedding = "voyage-3-lite"
 
 [thresholds]
 rule_min_evidence_count = 2
 rule_min_project_count = 2
 voice_min_evidence_count = 2
+cluster_cosine_threshold = 0.85
+
+[index]
+max_topic_entries = 20
+
+[voice]
+enabled = false  # v1: extract + cluster voice observations, but do
+                 # not synthesize voice/*.md until eval signal is good
 
 [paths]
 transcripts_glob = "~/.claude/projects/**/*.jsonl"
 output_dir = "~/.ghost"
 
 [batching]
-default_limit = 0   # 0 = unlimited
+default_limit = 0    # 0 = unlimited
+extract_workers = 5
 ```
 
 A baked-in default config ships with the binary; `~/.ghost/config.toml`
@@ -245,44 +278,100 @@ Default voice context is `cli-chat` (the user talking to Claude).
 Other contexts (`annual-review`, `slack`, `exec-brief`, etc.) are
 inferred from transcript content when the user is drafting or pasting
 material destined for that register. When uncertain, the extractor
-drops the observation rather than guessing.
+drops the observation rather than guessing. Dropped observations are
+not written to disk and leave no trace; only the validated set lands
+in the observations file.
 
-Skip the active session's transcript (detect by checking if the file
-is still being written to, or by matching against the current
-`CLAUDE_SESSION_ID` if available).
+**Active-session skip.** Skip any transcript whose mtime is within
+the last 5 minutes. This is a heuristic — `CLAUDE_SESSION_ID` is not
+reliably exposed outside the live session — but it is cheap, has no
+false negatives that matter (the next compose picks it up), and
+prevents the feedback loop where ghost extracts its own scaffolding
+turns.
 
-### Stage 2 — `cluster` (corpus-level, role: cheap)
+**Schema validation.** After the LLM returns JSON, validate each
+observation: `kind ∈ {identity, rule, topic, voice}`, voice carries
+`context`, topic carries `topic`. Drop malformed records with a
+warning rather than silently accepting a typo'd `kind`.
 
-Input: all observation files concatenated.
-Output: `.state/clusters.json`.
+**Secret scrubbing (post-filter, deterministic, Go).** Before writing
+the observations file, drop any observation whose `evidence` (or
+`text`) matches a credential pattern: API key prefixes (`sk-`, `pk-`,
+`ghp_`, `gho_`, `AKIA`, `ASIA`, etc.), JWTs (`eyJ[A-Za-z0-9_-]+\.`),
+`Authorization: Bearer …`, PEM block headers, high-entropy hex/base64
+runs over a length threshold. Dropped records are logged with the
+matched pattern (not the matched value) and never land on disk. This
+is the load-bearing safety net — `/ghost scan` exists as a reactive
+backstop, but extraction is where secrets are filtered out before
+they reach `.state/observations/*.json` or the embedding cache.
 
-Groups observations by `kind` (identity, rule, voice, topic), then
-sub-groups voice by `context` and topic by topic name. Collapses
-near-duplicates within each group and merges their evidence lists
-and source projects. This is where "I've said this 5 times across
-different sessions" becomes a strong signal versus a one-off comment.
-Evidence list length and project count are the frequency signals
-stage 3 uses.
+### Stage 2 — `cluster` (corpus-level, two-pass)
+
+Input: all observation files.
+Output: `.state/clusters.json` (with embedding cache in
+`.state/embeddings.json`).
+
+**2a — Embedding bucket (deterministic, Go).** Compute embeddings
+for each observation's `text` (cached by `(observation_hash,
+embedding_model_id)` so reruns are free but a model change cleanly
+invalidates). Partition by `(kind, sub-key)`: identity, rule, voice
+sub-grouped by context, topic sub-grouped by topic name. Within each
+partition, agglomerative-merge at cosine similarity ≥
+`cluster_cosine_threshold`. Buckets of size 1 skip 2b entirely.
+
+The cosine threshold is **model-coupled**: cosine distributions
+differ between embedding models, so swapping `[models].embedding`
+implies re-tuning the threshold. `embeddings.json` records the model
+ID it was built with; a mismatch with config forces re-embedding
+before clustering runs.
+
+**2b — Canonical phrasing (role: cheap, per multi-entry bucket).**
+For each bucket with >1 entry, the cheap model picks the canonical
+phrasing and confirms the entries truly describe the same thing.
+Each call sees ≤10 entries — context-bounded by construction.
+
+**2c — Counts (deterministic, Go).** From each bucket's
+`[]ClusterMember`, compute `EvidenceCount = len(members)` and
+`ProjectCount = |distinct project keys|`. These are the frequency
+signals stage 3 uses. The LLM never emits a number that drives a
+threshold.
 
 ### Stage 3 — `synthesize` (corpus-level, role: smart)
 
-Input: clusters.
-Output: drafts of `identity.md`, `rules.md`, `topics/*.md`,
-`voice/*.md`, and `index.md`.
+Input: clusters with deterministic counts.
+Output: `identity.md`, `rules.md`, `topics/*.md`, `voice/*.md`,
+`index.md`.
 
 One smart-model call per output file with the relevant cluster slice
-as input.
+as input. Each synthesis prompt carries explicit prose discipline:
+delete sentences you wouldn't miss, no em-dashes, no
+self-congratulation, prefer short concrete specifics. The output of
+this stage is the final output written to disk.
 
 - `identity.md` consumes the identity cluster. Output is short
-  (~15-25 lines), third-person, factual: role, team, primary
-  languages and stack, organizational context, headline expertise.
+  (~15 lines), third-person, factual, and **session-agnostic**:
+  name, employer, role, team, contact, broad technical background.
+  Project-specific facts (specific repos, services, frameworks tied
+  to one codebase, recent branches, ticket numbers) MUST live in
+  topic files, not here, because `identity.md` is loaded into every
+  session regardless of which project the user is in. The identity
+  synthesis prompt was tightened during Phase 2 (see commit history)
+  after the initial generation surfaced too much project-specific
+  detail; the corresponding observations remain in `clusters.json`
+  and will flow into `topics/*.md` in Phase 3.
   No first-person prose, no voice mimicry, no behavioral instructions.
   This is reference context for Claude, not a template.
-- `rules.md` consumes the rule cluster filtered by evidence count ≥ 2
-  AND project count ≥ 2. One-off comments do not become global rules;
-  rules that appear in only one project do not become global rules.
-  These are instructions to Claude that govern Claude's behavior
-  regardless of register.
+- `rules.md` consumes the rule cluster filtered (in Go, before the
+  LLM call) by evidence count ≥ 2 AND project count ≥ 2. One-off
+  comments do not become global rules; rules that appear in only
+  one project do not become global rules. These are instructions to
+  Claude that govern Claude's behavior regardless of register.
+  **Subtractive synthesis against `rules.user.md`:** the current
+  contents of `rules.user.md` are passed as context, and the prompt
+  instructs the smart model to OMIT any synthesized rule that
+  contradicts a user rule. This enforces precedence at compose time
+  rather than relying on prose hints to Claude at runtime — two
+  conflicting rules never land on disk simultaneously.
 - `topics/<name>.md` consumes its topic cluster, including
   single-project topics. A rule that appears in only one repo lives
   here, not in global rules.
@@ -292,20 +381,72 @@ as input.
   diction, sentence shape, register, lowercase/sentence-case habits,
   framing patterns. Each file makes clear it is reference material
   for ghostwriting in that register — NOT a directive that affects
-  how Claude phrases its own responses generally.
-- `index.md` is generated last. For each topic file AND each voice
-  file, the smart model produces trigger phrases the skill uses to
-  decide when to load. Voice triggers are narrower than topic
-  triggers and key on ghostwriting tasks (e.g., "drafting an annual
-  review", "writing a Slack post in my voice"), not on the register
-  generally being mentioned.
+  how Claude phrases its own responses generally. **Voice synthesis
+  is gated** by `[voice].enabled` (default false in v1): voice
+  observations are extracted and clustered, but voice files are not
+  written until `ghost eval` shows voice-context inference is
+  reliable on a labeled fixture set. See "Post-v1 tracking."
+- `index.md` is generated last and is **capped** (see "Always-loaded
+  budget" below). For each retained topic file AND each voice file,
+  the smart model produces trigger phrases the skill uses to decide
+  when to load. Voice triggers are narrower than topic triggers and
+  key on ghostwriting tasks ("drafting an annual review"), not on
+  the register being mentioned.
 
-### Stage 4 — `refine` (per output file, role: smart)
+**Atomic writes.** Synthesis writes all output files to a sibling
+tmpdir (`~/.ghost/.tmp-synthesize-<timestamp>/`), then renames the
+directory contents into `~/.ghost/` as a unit only after every file
+in the generation has been produced. The always-loaded set
+(`identity.md`, `rules.md`, `index.md`) is never observed in a
+mixed-generation state — Claude will not load new rules against a
+stale index.
 
-Applies an Orwell-style pass to each generated file: delete sentences
-you wouldn't miss, kill em-dashes, strip self-congratulation, prefer
-short concrete specifics. Separate from synthesis so the refine prompt
-can be tuned without rerunning synthesis.
+**Partial-failure handling.** Synthesis collects per-file errors
+instead of returning on the first one. If ANY file fails, the
+tmpdir is preserved and nothing is renamed into place; the previous
+generation's outputs remain authoritative. A retry of `compose
+--stages synthesize` regenerates only the failed files and, once
+the set is complete, performs the atomic swap.
+
+## Always-loaded budget
+
+Only four files are always loaded into every Claude Code session:
+`identity.md`, `rules.md`, `rules.user.md`, `index.md`. Their combined
+size is the only token cost paid on every CLI invocation, forever —
+so they are budgeted, not unbounded.
+
+- `identity.md` is capped at ~25 lines by prompt construction.
+- `rules.md` grows with rule count but is gated by the evidence + project
+  thresholds. In practice it plateaus.
+- `rules.user.md` is user-controlled. No cap, but the user owns it.
+- `index.md` is capped at the top 20 topic entries by evidence count,
+  plus all voice entries (voice registers are few). Topics outside
+  the cap still exist on disk and remain loadable on explicit `Read`
+  or via `ghost topics` — they just don't fire automatic triggers.
+
+`rules.user.md` overrides `rules.md` when they conflict. The file
+template states this at the top so the precedence is visible to
+Claude when both are loaded.
+
+## Failure modes
+
+- **Stage 1 JSON malformed.** Drop the offending observation, log,
+  continue. Never poison the corpus.
+- **Stage 3 partial.** Write what succeeded, report the rest, allow
+  resumption.
+- **`ghost forget`.** Removes a conversation's observations and its
+  ledger entry, but does NOT auto-recompose. The command prints
+  "synthesis is now stale; run: ghost compose --stages
+  cluster,synthesize". Silent staleness is the worst outcome.
+- **Prompt drift.** The embedded prompt directory is hashed at build
+  time. `ledger.json` records `prompts_version`. `ghost status`
+  reports "prompts: drifted (was X, now Y)" when the binary's hash
+  differs from the ledger's, signalling that synthesis should be
+  rerun.
+- **Ledger schema drift.** `ledger.json` carries `schema_version`.
+  `Load` refuses to run on a newer version than the binary knows;
+  this is the cheapest possible insurance against silent corruption
+  after a binary upgrade.
 
 ## Incremental compose and batching
 
@@ -314,6 +455,7 @@ transcript:
 
 ```json
 {
+  "schema_version": 1,
   "conversations": {
     "<transcript_path>": {
       "content_hash": "sha256:...",
@@ -324,10 +466,16 @@ transcript:
   },
   "last_compose": {
     "at": "2026-05-20T14:30:00Z",
-    "stages_run": ["extract", "cluster", "synthesize", "refine"]
+    "stages_run": ["extract", "cluster", "synthesize"],
+    "prompts_version": "sha256:9f3b1c..."
   }
 }
 ```
+
+`schema_version` lets a newer binary refuse to operate on a ledger
+shape it doesn't understand. `prompts_version` is a hash of the
+binary's embedded prompt directory, used by `ghost status` to detect
+when synthesis is stale relative to the current prompts.
 
 Content hash is what makes the ledger correct: when Claude Code
 appends to a JSONL file, the hash changes and the transcript is
@@ -339,12 +487,20 @@ Two independent batching axes:
    Default: unlimited. Sorted oldest-first so backlog drains
    predictably.
 2. `--stages extract` / `--stages extract,cluster` / `--stages all` —
-   run only a subset of pipeline stages. Default: `all`.
+   run only a subset of pipeline stages. Default: `all`. Stages can
+   be run individually; each reads its predecessor's on-disk output
+   (extract → `.state/observations/*.json`, cluster →
+   `.state/clusters.json`).
 
 This separation works because stage 1 is per-record (per-transcript)
-and stages 2–4 are corpus-level. Extraction is resumable; synthesis is
-a whole-corpus operation that only needs to run when you want the
-materialized view refreshed.
+and stages 2–3 are corpus-level. Extraction is resumable; clustering
+and synthesis are whole-corpus operations that only need to run when
+you want the materialized view refreshed.
+
+`compose` runs extract calls in parallel with a bounded worker pool
+(default 5). The ledger is mutex-guarded; per-transcript work is
+otherwise independent. A 6-month backlog drains in minutes rather
+than hours.
 
 Workflow this enables:
 
@@ -353,12 +509,17 @@ ghost compose --limit 5 --stages extract        # cheap, verify
 ghost show observations --recent                # eyeball
 ghost compose --limit 5 --stages extract        # next 5
 # ... repeat ...
-ghost compose --stages cluster,synthesize,refine  # roll up
+ghost compose --stages cluster,synthesize       # roll up
 ```
 
 Other knobs:
 
 - `--dry-run` — show what would be processed.
+- `--estimate` — count input tokens across the selected stages and
+  print a per-stage cost estimate using current config model IDs and
+  published prices. Does not call the API. Runs in seconds; intended
+  before any large backfill so cost surprises happen before, not
+  after.
 - `--since 7d` — only transcripts modified in last N days.
 - `--project <name>` — only transcripts under a specific project dir.
 - `ghost status` — ledger summary: total / processed / pending / dirty.
@@ -432,11 +593,15 @@ design.
 - `/ghost show` — print identity + rules + manual rules.
 - `/ghost topics` — list topic files with last-modified.
 - `/ghost voice` — list voice files (one per register).
-- `/ghost status` — ledger summary.
+- `/ghost status` — ledger summary, including whether prompts have
+  drifted since the last compose.
 - `/ghost add-rule "<text>"` — append to `rules.user.md` (survives
   recompose).
 - `/ghost forget <conv>` — drop a conversation's observations and
-  recompose synthesis.
+  ledger entry. Prints a warning that synthesis is now stale.
+- `/ghost scan` — grep the observation corpus for secret/credential
+  patterns (API keys, JWTs, `Authorization: Bearer`, etc.). On-demand
+  safety net; does not mutate state.
 
 `compose` is intentionally NOT a slash command. It is the expensive
 batch step and belongs at the terminal.
@@ -499,37 +664,131 @@ From this point: feedback given in sessions flows into transcripts
 and gets picked up the next time `ghost compose` runs. The reactive
 "save this as memory" pattern becomes unnecessary.
 
+## Phasing
+
+The build is split into three vertical slices. Each phase ships
+something independently useful — you can stop at the end of any
+phase and still benefit. Risk is front-loaded: phase 1 validates
+that the cheapest, riskiest assumption (extract quality on real
+transcripts) holds before anything downstream is built on top of it.
+
+### Phase 1 — Extract only (walking skeleton)
+
+Goal: prove extract quality on the real transcript corpus.
+
+In scope:
+- Transcript glob, content hashing, ledger (single schema version,
+  no refusal logic yet).
+- Stage 1 extract with secret scrubbing and schema validation.
+- `ghost compose --stages extract --limit N`, `ghost status`,
+  `ghost forget`.
+- Per-transcript observation files written atomically (tmp + rename
+  per file — no multi-file transaction needed yet).
+- `ghost show observations --recent` for eyeball verification.
+
+Out of scope for phase 1: clustering, synthesis, skill, CLAUDE.md
+includes, any always-loaded files.
+
+Exit criteria: hand-review of ~20 transcripts' observations shows
+the cheap model captures identity / rules / topics / voice signals
+usefully and secret scrubbing drops credentials reliably.
+
+### Phase 2 — Synthesis MVP (identity + rules)
+
+Goal: deliver the always-loaded core. No lazy loading yet.
+
+In scope:
+- Stage 2 clustering (both passes; counts in Go).
+- Stage 3 synthesis for `identity.md` and `rules.md` only.
+- Atomic multi-file synthesis writes (tmpdir + directory rename).
+- Two `@~/.ghost/...` includes wired into `~/.claude/CLAUDE.md`
+  (identity + rules).
+- `ghost compose` with `--stages cluster,synthesize` and `all`.
+
+Out of scope for phase 2: topics, index, voice, skill, slash
+commands beyond `add-rule` / `forget`, lazy loading of any kind.
+
+Exit criteria: two weeks of normal Claude Code use shows identity
+context calibrates responses correctly and synthesized rules
+reflect feedback given across multiple projects.
+
+### Phase 3 — Lazy loading
+
+Goal: enable the three-layer runtime architecture.
+
+In scope:
+- Stage 3 synthesis for `topics/*.md` and capped `index.md`.
+- `SKILL.md` with mechanical-check trigger logic.
+- `rules.user.md` plus subtractive-synthesis precedence at compose
+  time.
+- `ghost compose --estimate`.
+- Migration off `~/.claude/memory/` per the migration section.
+
+Exit criteria: lazy-loaded topics fire on relevant tasks and
+`~/.claude/memory/` can be archived without losing fidelity.
+
+### Why this ordering
+
+- Phase 1 risk is **extract quality**. Cheapest to validate, blocks
+  everything downstream.
+- Phase 2 risk is **synthesis quality + cross-project frequency
+  signal**. Validated by living with the always-loaded outputs.
+- Phase 3 risk is **runtime trigger discipline** — whether the skill
+  actually loads the right topic at the right time. Only meaningful
+  to test once topics exist and there's a corpus to synthesize from.
+
+## Post-v1 tracking
+
+Items deferred from v1 with a clear trigger for revisiting. Each
+entry: what, why it's deferred, and what signal unblocks it.
+
+| Item | Deferred because | Unblock signal |
+|---|---|---|
+| Enable voice synthesis (`[voice].enabled = true`) | Voice-context inference at extract time is the biggest correctness risk | `ghost eval` shows >90% correct voice-context labeling on a hand-labeled fixture set |
+| `ghost eval` itself (judge-LLM synthesis quality check) | Only needed to gate voice; voice is off in v1 | Voice enablement is being considered, OR a synthesis regression ships unnoticed and post-mortem identifies eval as the missing safety net |
+| Golden-transcript LLM-stage fixtures with similarity scoring | Pure-Go unit tests cover the deterministic logic; LLM-stage fixtures are maintenance until eval exists | Comes online with `ghost eval` |
+| `/ghost scan` reactive secret scanner | Stage 1 scrubbing in extract makes the reactive scanner redundant for the v1 corpus | A secret pattern slips through extract scrubbing and lands in observations |
+| `--since` and `--project` filters on `ghost compose` | `--limit` covers the backfill case; these are convenience filters | User asks for either by name during normal use |
+| Prompts-version drift detection in `ghost status` | Always-rerun is fine while prompts are changing frequently | Prompts stabilize and rerunning becomes wasteful |
+| Ledger `schema_version` refusal logic | Only one schema exists; field is recorded but no version-mismatch handling | Schema actually changes in a breaking way |
+| `ghost config edit` | `$EDITOR ~/.ghost/config.toml` works | Config edits become frequent enough that a wrapper earns its keep |
+| `/ghost topics` and `/ghost voice` slash commands | `ls ~/.ghost/topics/` works; v1 ships `/ghost show`, `/ghost status`, `/ghost add-rule`, `/ghost forget` only | User asks for either by name |
+| `ghost compose --prune-missing` to drop ledger entries for deleted transcripts | Real but rare; manual `ghost forget` is sufficient for now | User reports a stale-ledger incident, or backlog of missing entries exceeds ~10% of ledger |
+| Multi-machine sync of `~/.ghost/` (laptop ↔ desktop) | Out of scope; no good answer without conflict semantics | User actively uses ghost on two machines and reports drift |
+| Per-topic load-frequency tracking at runtime to refine the top-20 cap | No evidence the fixed cap is wrong | A topic with high evidence count is observed to fire frequently but sit outside the cap, or vice versa |
+| Voice-context detection heuristics beyond explicit framing ("help me draft my annual review") | Explicit framing handles the common case; aggressive inference risks contaminating registers | Eval shows the explicit-framing baseline misses >20% of legitimate ghostwriting tasks |
+| Multi-dimension eval harness | Day-one harnesses become maintenance burden before they earn their keep | A regression slips past the simple judge-LLM eval AND would have been caught by a dimensional breakdown |
+
+When an item is picked up, move it out of this table into the
+appropriate section and update the doc's `status` field.
+
 ## Open questions
 
-- Embedding-based dedup in stage 2 versus LLM-only dedup. Embedding
-  cosine is cheaper and more deterministic; LLM dedup handles
-  paraphrase better. Likely start with LLM, add embedding short-circuit
-  if cost matters.
-- Whether to track per-topic load frequency at runtime to surface
-  candidates for promotion (topic → rule) or demotion (rule → topic).
-  Defer until there is signal that the index is mis-tuned.
-- Active-session transcript detection. `CLAUDE_SESSION_ID` may not be
-  available outside the session; falling back to "file modified within
-  the last N minutes" is a reasonable heuristic but worth confirming.
-- Voice context detection at extract time. Defaulting to `cli-chat`
-  is correct for most Claude Code transcripts. Detecting when the
-  user is drafting another register inside a CLI session (annual
-  review, Slack post, exec brief) needs a clear heuristic — likely
-  the user explicitly framing the task ("help me draft my annual
-  review"). Worth tuning the extract prompt and watching false
-  positives in early eval runs.
+- Embedding model choice. Any small embedding model with ~1k-dim
+  output and per-call cost under $0.001 is fine; the specific choice
+  is tunable in `config.toml`. Note the threshold-coupling caveat in
+  stage 2a: swapping models invalidates the embedding cache and may
+  require re-tuning `cluster_cosine_threshold`.
+- Exact secret-pattern set for stage 1 scrubbing. Starting set is
+  listed in the stage 1 description; the full pattern list lives in
+  code (`internal/extract/secrets.go`) and will accrete as new
+  patterns surface in eval or `/ghost scan` reports.
 
 ## Summary
 
 Ghost is a small Go CLI plus a Claude Code skill. The CLI does
-out-of-band synthesis from Claude Code transcripts in four stages,
-maintaining a hashed ledger so compose is resumable and batchable.
-The skill enforces a three-layer runtime: a small always-loaded core
-(identity context, behavior rules, lookup index); a lazy library of
-topic files for domain guidance; and a lazy library of voice files,
-one per writing register, loaded only when ghostwriting. Identity is
-context for Claude, not a template Claude mimics. Voice is reference
-material for ghostwriting, not a directive that affects Claude's
-normal responses. Cross-project frequency is the signal that
-distinguishes "how Sarah works" from "how Sarah works in one
-specific repo."
+out-of-band synthesis from Claude Code transcripts in three stages
+(extract, cluster, synthesize), maintaining a hashed ledger so
+compose is resumable and batchable. Clustering is two-pass:
+deterministic embedding-based bucketing in Go, then a cheap LLM call
+to pick canonical phrasing per bucket. Frequency counts are computed
+in Go from cluster members — never from anything the LLM emits. The
+skill enforces a three-layer runtime: a small, capped always-loaded
+core (identity context, behavior rules, lookup index); a lazy
+library of topic files for domain guidance; and a lazy library of
+voice files, one per writing register, loaded only when
+ghostwriting. Identity is context for Claude, not a template Claude
+mimics. Voice is reference material for ghostwriting, not a directive
+that affects Claude's normal responses. Cross-project frequency is
+the signal that distinguishes "how Sarah works" from "how Sarah works
+in one specific repo."
