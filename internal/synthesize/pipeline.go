@@ -54,6 +54,7 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 
 	identityClusters := pickKind(cf.Clusters, "identity")
 	ruleClusters := FilterRules(cf.Clusters, p.MinRuleEvidence, p.MinRuleProjects)
+	topicGroups := GroupTopicClusters(cf.Clusters)
 
 	userRules := readUserRules(p.GhostDir)
 
@@ -61,6 +62,7 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		BuildIdentity(ctx, p.Client, p.SmartModel, identityClusters),
 		BuildRules(ctx, p.Client, p.SmartModel, ruleClusters, userRules),
 	}
+	results = append(results, BuildTopics(ctx, p.Client, p.SmartModel, topicGroups)...)
 
 	var failed []string
 	for _, r := range results {
@@ -68,7 +70,12 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 			failed = append(failed, fmt.Sprintf("%s: %v", r.Name, r.Err))
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(tmpDir, r.Name), []byte(r.Content), 0o644); err != nil {
+		dst := filepath.Join(tmpDir, r.Name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: mkdir: %v", r.Name, err))
+			continue
+		}
+		if err := os.WriteFile(dst, []byte(r.Content), 0o644); err != nil {
 			failed = append(failed, fmt.Sprintf("%s: write: %v", r.Name, err))
 		}
 	}
@@ -76,14 +83,25 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		return fmt.Errorf("synthesize partial failure (tmpdir preserved at %s): %s", tmpDir, strings.Join(failed, "; "))
 	}
 
+	// Refresh topics/ as a unit so removed topics vanish. This MUST be
+	// after the partial-failure gate above: a failed run must not destroy
+	// prior topics.
+	topicsDst := filepath.Join(p.GhostDir, "topics")
+	if err := os.RemoveAll(topicsDst); err != nil {
+		return fmt.Errorf("clean topics/: %w (tmpdir preserved at %s)", err, tmpDir)
+	}
+
 	for _, r := range results {
 		src := filepath.Join(tmpDir, r.Name)
 		dst := filepath.Join(p.GhostDir, r.Name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w (tmpdir preserved at %s)", filepath.Dir(dst), err, tmpDir)
+		}
 		if err := os.Rename(src, dst); err != nil {
 			return fmt.Errorf("rename %s: %w (tmpdir preserved at %s)", r.Name, err, tmpDir)
 		}
 	}
-	_ = os.Remove(tmpDir)
+	_ = os.RemoveAll(tmpDir)
 	return nil
 }
 

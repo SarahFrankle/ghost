@@ -2,6 +2,7 @@ package synthesize
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,3 +115,70 @@ var errFakeRulesFail = &stringErr{"forced rules failure"}
 type stringErr struct{ s string }
 
 func (e *stringErr) Error() string { return e.s }
+
+func TestPipelineWritesTopicsSubdir(t *testing.T) {
+	dir := t.TempDir()
+	f := &fakeClient{resp: "# Out\n\nbody.\n"}
+	p := &Pipeline{
+		Client: f, SmartModel: "smart", GhostDir: dir,
+		MinRuleEvidence: 2, MinRuleProjects: 2,
+	}
+	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
+		{Kind: "identity", Canonical: "id", EvidenceCount: 2, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "id", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", SubKey: "testing", Canonical: "prefer table-driven",
+			EvidenceCount: 3, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "prefer table-driven", Evidence: "t", Project: "p"}}},
+	}}
+	if err := p.Run(context.Background(), cf); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"identity.md", "rules.md", "topics/testing.md"} {
+		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
+			t.Fatalf("missing %s: %v", want, err)
+		}
+	}
+}
+
+func TestPipelinePartialFailureLeavesPriorTopicsIntact(t *testing.T) {
+	dir := t.TempDir()
+	// Seed an existing topics/ directory.
+	if err := os.MkdirAll(filepath.Join(dir, "topics"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "topics", "old.md"), []byte("# Old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Client that errors on the second Complete call (BuildRules).
+	f := &countingFakeClient{respondAfter: func(n int) (string, error) {
+		if n == 2 {
+			return "", errors.New("boom")
+		}
+		return "# Out\n", nil
+	}}
+	p := &Pipeline{Client: f, SmartModel: "smart", GhostDir: dir, MinRuleEvidence: 1, MinRuleProjects: 1}
+	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
+		{Kind: "identity", Canonical: "x", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "x", Evidence: "t", Project: "p"}}},
+		{Kind: "rule", Canonical: "y", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "y", Evidence: "t", Project: "p"}}},
+	}}
+	err := p.Run(context.Background(), cf)
+	if err == nil {
+		t.Fatal("expected partial-failure error")
+	}
+	// Prior topics survive.
+	if _, statErr := os.Stat(filepath.Join(dir, "topics", "old.md")); statErr != nil {
+		t.Fatalf("prior topics/old.md was destroyed by failed run: %v", statErr)
+	}
+}
+
+type countingFakeClient struct {
+	n            int
+	respondAfter func(n int) (string, error)
+}
+
+func (c *countingFakeClient) Complete(ctx context.Context, model, system, user string) (string, error) {
+	c.n++
+	return c.respondAfter(c.n)
+}
