@@ -29,9 +29,10 @@ import (
 )
 
 var (
-	composeLimit  int
-	composeStages string
-	composeDry    bool
+	composeLimit    int
+	composeStages   string
+	composeDry      bool
+	composeEstimate bool
 )
 
 var composeCmd = &cobra.Command{
@@ -41,6 +42,13 @@ var composeCmd = &cobra.Command{
 		stages, err := parseStages(composeStages)
 		if err != nil {
 			return err
+		}
+		if composeEstimate {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			return runEstimate(cmd.Context(), cfg, stages)
 		}
 		for _, s := range stages {
 			switch s {
@@ -68,6 +76,7 @@ func init() {
 	composeCmd.Flags().IntVar(&composeLimit, "limit", 0, "process at most N unprocessed transcripts (0 = all)")
 	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages: extract,cluster,synthesize, or all")
 	composeCmd.Flags().BoolVar(&composeDry, "dry-run", false, "list what would be processed and exit")
+	composeCmd.Flags().BoolVar(&composeEstimate, "estimate", false, "print per-stage token + cost estimate and exit")
 	rootCmd.AddCommand(composeCmd)
 }
 
