@@ -72,7 +72,7 @@ var statusCmd = &cobra.Command{
 				fmt.Printf("clusters: present but unreadable: %v\n", err)
 			}
 		} else {
-			fmt.Println("clusters: none (run: ghost compose --stages cluster)")
+			fmt.Println("clusters: none (run: ghost cluster)")
 		}
 
 		for _, name := range []string{"identity.md", "rules.md"} {
@@ -80,7 +80,7 @@ var statusCmd = &cobra.Command{
 			if info, err := os.Stat(p); err == nil {
 				fmt.Printf("%s: present (%d bytes, %s)\n", name, info.Size(), info.ModTime().Format(time.RFC3339))
 			} else {
-				fmt.Printf("%s: missing (run: ghost compose --stages synthesize)\n", name)
+				fmt.Printf("%s: missing (run: ghost synthesize)\n", name)
 			}
 		}
 

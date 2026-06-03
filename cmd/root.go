@@ -4,10 +4,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	verbose    bool
-	configPath string
-)
+var configPath string
 
 var rootCmd = &cobra.Command{
 	Use:   "ghost",
@@ -19,6 +16,5 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config.toml (default ~/.ghost/config.toml)")
 }

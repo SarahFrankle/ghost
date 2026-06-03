@@ -41,7 +41,7 @@ var forgetCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("forgot %s\n", target)
-		fmt.Println("note: synthesis (when it exists) is now stale; rerun compose --stages cluster,synthesize when Phase 2 ships.")
+		fmt.Println("note: synthesis is now stale; rerun `ghost compose`.")
 		return nil
 	},
 }

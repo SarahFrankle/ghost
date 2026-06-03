@@ -32,7 +32,6 @@ import (
 
 var (
 	composeLimit     int
-	composeStages    string
 	composeDry       bool
 	composeEstimate  bool
 	composeReobserve bool
@@ -40,52 +39,69 @@ var (
 	composeResynth   bool
 )
 
+// allStages is the full pipeline order used by `ghost compose`.
+var allStages = []string{"extract", "cluster", "synthesize"}
+
 var composeCmd = &cobra.Command{
 	Use:   "compose",
-	Short: "Run the ghost compose pipeline",
+	Short: "Run the full ghost pipeline: extract, cluster, synthesize",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		stages, err := parseStages(composeStages)
-		if err != nil {
-			return err
-		}
 		if composeEstimate {
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
 			}
-			return runEstimate(cmd.Context(), cfg, stages)
+			return runEstimate(cmd.Context(), cfg, allStages)
 		}
-		for _, s := range stages {
-			switch s {
-			case "extract":
-				if err := runExtract(cmd.Context()); err != nil {
-					return err
-				}
-			case "cluster":
-				if err := runCluster(cmd.Context()); err != nil {
-					return err
-				}
-			case "synthesize":
-				if err := runSynthesize(cmd.Context()); err != nil {
-					return err
-				}
-			default:
-				return fmt.Errorf("unknown stage %q", s)
-			}
+		if err := runExtract(cmd.Context()); err != nil {
+			return err
 		}
-		return nil
+		if err := runCluster(cmd.Context()); err != nil {
+			return err
+		}
+		return runSynthesize(cmd.Context())
+	},
+}
+
+var extractCmd = &cobra.Command{
+	Use:   "extract",
+	Short: "Extract observations from new transcripts",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runExtract(cmd.Context())
+	},
+}
+
+var clusterCmd = &cobra.Command{
+	Use:   "cluster",
+	Short: "Cluster observations by similarity",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runCluster(cmd.Context())
+	},
+}
+
+var synthesizeCmd = &cobra.Command{
+	Use:   "synthesize",
+	Short: "Synthesize identity, rules, topics, and index from clusters",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSynthesize(cmd.Context())
 	},
 }
 
 func init() {
-	composeCmd.Flags().IntVar(&composeLimit, "limit", 0, "process at most N unprocessed transcripts (0 = all)")
-	composeCmd.Flags().StringVar(&composeStages, "stages", "extract", "comma-separated stages: extract,cluster,synthesize, or all")
-	composeCmd.Flags().BoolVar(&composeDry, "dry-run", false, "list what would be processed and exit")
-	composeCmd.Flags().BoolVar(&composeEstimate, "estimate", false, "print per-stage token + cost estimate and exit")
-	composeCmd.Flags().BoolVar(&composeReobserve, "reobserve", false, "force re-extract of all transcripts, skipping fingerprint cache")
-	composeCmd.Flags().BoolVar(&composeRecluster, "recluster", false, "force rebuild of clusters.json, skipping fingerprint cache")
-	composeCmd.Flags().BoolVar(&composeResynth, "resynth", false, "force re-synthesis of identity/rules/topics/index, skipping fingerprint cache")
+	extractCmd.Flags().IntVar(&composeLimit, "limit", 0, "process at most N unprocessed transcripts (0 = all)")
+	extractCmd.Flags().BoolVar(&composeDry, "dry-run", false, "list what would be processed and exit")
+	extractCmd.Flags().BoolVar(&composeReobserve, "reobserve", false, "force re-extract of all transcripts, skipping fingerprint cache")
+
+	clusterCmd.Flags().BoolVar(&composeRecluster, "recluster", false, "force rebuild of clusters.json, skipping fingerprint cache")
+
+	synthesizeCmd.Flags().BoolVar(&composeResynth, "resynth", false, "force re-synthesis of identity/rules/topics/index, skipping fingerprint cache")
+
+	composeCmd.Flags().BoolVar(&composeEstimate, "estimate", false, "print per-stage token + cost estimate for the full pipeline and exit")
+
 	rootCmd.AddCommand(composeCmd)
+	rootCmd.AddCommand(extractCmd)
+	rootCmd.AddCommand(clusterCmd)
+	rootCmd.AddCommand(synthesizeCmd)
 }
 
 func runExtract(ctx context.Context) error {
@@ -264,23 +280,6 @@ func observationsFileName(contentHash string) string {
 	return trimmed + "-" + hex.EncodeToString(sum[:4])
 }
 
-// parseStages accepts comma-separated stage names or the literal "all".
-// Order is enforced: extract → cluster → synthesize.
-func parseStages(raw string) ([]string, error) {
-	if raw == "all" {
-		return []string{"extract", "cluster", "synthesize"}, nil
-	}
-	known := map[string]int{"extract": 0, "cluster": 1, "synthesize": 2}
-	parts := strings.Split(raw, ",")
-	for _, p := range parts {
-		if _, ok := known[p]; !ok {
-			return nil, fmt.Errorf("unknown stage %q (want one of: extract, cluster, synthesize, all)", p)
-		}
-	}
-	sort.SliceStable(parts, func(i, j int) bool { return known[parts[i]] < known[parts[j]] })
-	return parts, nil
-}
-
 func runCluster(ctx context.Context) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -394,7 +393,7 @@ func runSynthesize(ctx context.Context) error {
 
 	cf, err := cluster.LoadClusters(clustersPath)
 	if err != nil {
-		return fmt.Errorf("load clusters.json (run `ghost compose --stages cluster` first): %w", err)
+		return fmt.Errorf("load clusters.json (run `ghost cluster` first): %w", err)
 	}
 
 	expectedFP := synthesizeFingerprint(cf.Fingerprint, cfg.Models.Smart, cfg.Thresholds.RuleMinEvidenceCount, cfg.Thresholds.RuleMinProjectCount, cfg.Index.MaxTopicEntries)
