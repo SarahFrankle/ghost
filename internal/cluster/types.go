@@ -13,18 +13,15 @@ type ClusterMember struct {
 	Text            string `json:"text"`
 	Evidence        string `json:"evidence"`
 	Context         string `json:"context,omitempty"`
-	Topic           string `json:"topic,omitempty"`
 	Confidence      string `json:"confidence,omitempty"`
 }
 
 // SubKey returns the partition discriminator inside a kind.
-// voice → Context, topic → Topic, others → "".
+// voice → Context; everything else (including topic) → "". Topics are
+// pooled together and merged by embedding cosine, not by a free-text key.
 func (m ClusterMember) SubKey() string {
-	switch m.Kind {
-	case "voice":
+	if m.Kind == "voice" {
 		return m.Context
-	case "topic":
-		return m.Topic
 	}
 	return ""
 }

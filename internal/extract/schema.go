@@ -11,7 +11,6 @@ type Observation struct {
 	Text       string `json:"text"`
 	Evidence   string `json:"evidence"`
 	Confidence string `json:"confidence,omitempty"`
-	Topic      string `json:"topic,omitempty"`
 	Context    string `json:"context,omitempty"`
 }
 
@@ -37,9 +36,6 @@ func (o Observation) Validate() error {
 	}
 	if o.Evidence == "" {
 		return errors.New("evidence required")
-	}
-	if o.Kind == "topic" && o.Topic == "" {
-		return errors.New("topic kind requires topic field")
 	}
 	if o.Kind == "voice" && o.Context == "" {
 		return errors.New("voice kind requires context field")

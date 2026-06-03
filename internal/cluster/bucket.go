@@ -3,16 +3,19 @@ package cluster
 import "github.com/SarahFrankle/ghost/internal/embedding"
 
 // Bucket partitions members by (kind, sub_key) and within each partition
-// merges members whose embeddings are within `threshold` cosine of an
-// existing cluster's first member (single-linkage agglomerative).
+// merges members whose embeddings are within thresholdFor(kind) cosine of
+// an existing cluster's first member (single-linkage agglomerative).
 //
 // vecOf maps a member index to its embedding. The function never calls
 // the embedder itself — callers pre-load vectors so this stays purely
 // deterministic and trivially testable.
 //
+// thresholdFor is consulted per-partition: identity and rule typically want
+// a tight threshold (e.g. 0.85), topic wants a looser one (e.g. 0.75).
+//
 // Buckets of size 1 are returned as-is. Counts are computed here so the
 // LLM never produces a number that drives a downstream threshold.
-func Bucket(members []ClusterMember, vecOf func(i int) []float32, threshold float32) []Cluster {
+func Bucket(members []ClusterMember, vecOf func(i int) []float32, thresholdFor func(kind string) float32) []Cluster {
 	type key struct{ kind, sub string }
 	parts := map[key][]int{}
 	for i, m := range members {
@@ -22,6 +25,7 @@ func Bucket(members []ClusterMember, vecOf func(i int) []float32, threshold floa
 
 	var out []Cluster
 	for k, idxs := range parts {
+		threshold := thresholdFor(k.kind)
 		var clusters [][]int
 		for _, i := range idxs {
 			vi := vecOf(i)

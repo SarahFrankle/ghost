@@ -8,57 +8,88 @@ Companion to `docs/specs/2026-05-22-topics-by-embedding.md` (the
 architectural spec) and `docs/specs/2026-05-22-findings.md` (the
 chunking rationale).
 
-## Decision 1: Two per-cluster calls for topic synthesis
+## Decision 1: One smart call per cluster; slug derived from the H1
 
-Cheap-model call emits the slug, then smart-model call writes the
-body. One pair of calls per cluster.
+> **Revised 2026-05-22.** Original choice was B (two per-cluster
+> calls: cheap-local slug + smart body). Reconsidered after noticing
+> (1) the structural separation echoed muse's pipeline depth without
+> muse's pipeline-depth justification — ghost's upstream cosine
+> clustering already does the consolidation work that motivates
+> multi-stage decomposition in muse; and (2) the local-Ollama naming
+> call didn't actually reduce Claude token usage, since the body call
+> is unchanged in either option — Ollama was additive, not
+> substitutive. Body-with-H1, caller slugifies, is the simpler shape
+> for ghost's actual product. Revised decision below.
+
+> **Revised 2026-06-03.** The chunk-3 e2e falsified this decision's
+> collision premise (Pro bullet 3 below: "slug collisions remain a clean
+> signal ... the topic cosine threshold is wrong"). On `nomic-embed-text`
+> a threshold sweep found *no* value that clears collisions — they live
+> at the titling step, not the bucketing step (the smart model
+> independently gives distinct-but-related clusters the same `# <Title>`).
+> Behavior is now **collision → merge**: colliding clusters are combined
+> and re-synthesized to a unique-slug fixpoint, never failed. The
+> single-call-per-cluster, slug-from-H1 shape (the actual subject of this
+> decision) is unchanged. See
+> `docs/specs/2026-06-03-chunk-3-collision-merge-design.md`. Pro bullet 3
+> below is retained as the original (now-overturned) rationale.
+
+Single smart-model call per cluster. Model emits a body that begins
+with `# <Title>`. Caller slugifies the title to produce the filename.
 
 **Considered**
 
-- **A — One combined call.** Model emits `{slug, body}` in a single
-  smart-model call per cluster.
-- **B — Two per-cluster calls.** Cheap model names; smart model
-  writes. **Chosen.**
+- **A — One combined call, structured envelope.** Model emits
+  `{slug, body}` in a single smart-model call per cluster.
+- **B — Two per-cluster calls.** Cheap (local) model names; smart
+  model writes.
 - **C — Body only; derive slug from the H1.** Single smart-model call
-  per cluster; slugify the first heading.
+  per cluster; slugify the first heading. **Chosen.**
 - **D — Muse-style global naming.** One smart-model call that sees
   every cluster's labels at once and emits a deduped canonical name
   set, then per-cluster body calls.
 
-**Pros (B)**
+**Pros (C)**
 
-- Each call has one job. Slug call sees a small payload (canonicals +
-  sample members) and returns 1–4 words — conditions under which a
-  model is reliably good. Body call keeps the prose shape that already
-  works.
-- Cheap model is sufficient for naming a coherent cluster. Marginal
-  extra cost (~$0.001/topic on Haiku).
-- Failure isolation. A bad slug response fails one topic; the rest of
-  synthesis continues. No envelope-format failure mode that could
-  poison good prose output.
-- Independently tunable. The naming prompt can be tightened without
-  touching the body prompt and vice versa.
+- One model, one call, one prompt to maintain. No naming client, no
+  naming prompt, no naming-backend config field, no per-cluster
+  failure-mode for naming distinct from body.
+- The H1 the reader sees and the filename they `@`-reference are the
+  same concept at two grains. Coupling them is a feature, not a leak.
+- Slug collisions remain a clean signal: two clusters producing
+  identical (slugified) titles means the topic cosine threshold is
+  wrong. Detection is a free byproduct of doing the body work.
+- Slugifier is deterministic, ~20 lines, no model variance.
+- No new dependency on a guessed local naming model.
 
-**Cons (B)**
+**Cons (C)**
 
-- 2× call count per topic versus today. Only the cheap call is new;
-  body cost is unchanged.
-- The body prompt has to be told the slug it's writing under. Mild
-  plumbing in `BuildTopics`.
-- No cross-cluster view at naming time. Accepted: embedding-similarity
-  clustering upstream already merges synonyms. Slug collisions become
-  a signal of a bad cluster threshold, not a defect to mask.
+- Couples H1 phrasing to filename. If a future requirement wants a
+  long human-readable title with a short filename slug, that lever is
+  gone — would need to add an envelope (regress to A) or a second call
+  (regress to B). Acceptable: not a current requirement, and the
+  current cost of optionality is real (extra call, extra config,
+  extra prompt, extra failure mode).
+- Body prompt grows one rule ("start with `# <Title>` where the title
+  is a clean noun phrase"). Mild.
+- Body call's output now has to be parsed for the H1. Trivial — first
+  line, regex.
 
 **Why not the others**
 
-- **vs A:** A asks the model to wrap free-form prose in a structured
-  envelope (JSON or frontmatter). That introduces a new failure class
-  — well-written prose discarded because the wrapper is malformed —
-  which does not exist today.
-- **vs C:** Ties slug quality to title quality permanently. The title
-  is optimized for "good first line of a markdown file"; the slug is
-  optimized for "good filename." Different jobs, diluted attention if
-  the same string serves both.
+- **vs A:** Asks the model to wrap free-form prose in a structured
+  envelope (JSON or frontmatter). Introduces a new failure class —
+  well-written prose discarded because the wrapper is malformed —
+  which C does not have. The first-line-H1 convention is markdown's
+  native shape, not an envelope.
+- **vs B:** Structural decomposition only pays off if the cheap call
+  is doing work the smart call would otherwise have to do, or if it
+  substitutes for Claude work. Neither holds. Ghost's upstream cosine
+  clustering has already settled "what concept is this?" by the time
+  synthesis runs; the smart body call sees the same cluster regardless
+  of whether a separate naming call happened first. Adds an Ollama
+  client, a naming prompt, a backend-selection config, and a guessed
+  local-model choice (`qwen2.5:3b`) for no Claude-token saving.
 - **vs D:** Buys cross-cluster dedup that embedding clustering already
   provides. Muse needs global naming because it produces a single
   composite document; ghost produces per-file output, so the global

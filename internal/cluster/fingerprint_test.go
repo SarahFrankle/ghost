@@ -10,13 +10,12 @@ import (
 )
 
 func TestClustersFingerprintDistinguishesInputs(t *testing.T) {
-	base := ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", "claude-haiku", "promptHash", 0.82)
+	base := ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, 0.75)
 	cases := map[string]string{
-		"obs added":         ClustersFingerprint([]string{"a", "b", "c"}, "voyage-3-lite", "claude-haiku", "promptHash", 0.82),
-		"embedding model":   ClustersFingerprint([]string{"a", "b"}, "nomic-embed-text", "claude-haiku", "promptHash", 0.82),
-		"canonical model":   ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", "claude-sonnet", "promptHash", 0.82),
-		"prompt hash":       ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", "claude-haiku", "promptHash2", 0.82),
-		"cosine threshold":  ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", "claude-haiku", "promptHash", 0.83),
+		"obs added":               ClustersFingerprint([]string{"a", "b", "c"}, "voyage-3-lite", 0.85, 0.75),
+		"embedding model":         ClustersFingerprint([]string{"a", "b"}, "nomic-embed-text", 0.85, 0.75),
+		"identity/rule threshold": ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.86, 0.75),
+		"topic threshold":         ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, 0.76),
 	}
 	for name, fp := range cases {
 		if fp == base {

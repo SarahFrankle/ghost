@@ -25,16 +25,6 @@ func ExtractSystem() string { return extractSystem }
 // cached observations can be invalidated when the prompt changes.
 func ExtractSystemHash() string { return hashOf(extractSystem) }
 
-//go:embed cluster.canonical.system.md
-var clusterCanonicalSystem string
-
-// ClusterCanonicalSystem returns the embedded prompt for stage 2b.
-func ClusterCanonicalSystem() string { return clusterCanonicalSystem }
-
-// ClusterCanonicalSystemHash returns a stable hex hash of the cluster
-// canonical-naming prompt.
-func ClusterCanonicalSystemHash() string { return hashOf(clusterCanonicalSystem) }
-
 //go:embed synthesize.identity.system.md
 var synthesizeIdentitySystem string
 
@@ -58,11 +48,3 @@ var synthesizeIndexSystem string
 
 func SynthesizeIndexSystem() string     { return synthesizeIndexSystem }
 func SynthesizeIndexSystemHash() string { return hashOf(synthesizeIndexSystem) }
-
-//go:embed canonicalize.slug.system.md
-var canonicalizeSlugSystem string
-
-// CanonicalizeSlugSystem returns the prompt used by the slug
-// canonicalization stage to decide whether a candidate group of slugs
-// describes the same topic and which one to keep.
-func CanonicalizeSlugSystem() string { return canonicalizeSlugSystem }

@@ -13,29 +13,22 @@ import (
 )
 
 // Pipeline owns stage 2 end-to-end: load observation files, embed each
-// observation (cache-aware), bucket, optionally canonicalize, then
-// write clusters.json. The Canonicalizer field is optional; if nil,
-// 2b is skipped (clusters keep their seed canonical text).
+// observation (cache-aware), bucket per-kind, then write clusters.json.
+// Topic observations bucket by cosine on .Text alone (no SubKey).
 type Pipeline struct {
-	Embedder        embedding.Embedder
-	EmbeddingModel  string
-	Cache           *embedding.Cache
-	CacheSavePath   string
-	ClustersPath    string
-	CosineThreshold float32
-	Canonicalizer   *Canonicalizer
-	Workers         int
-	Log             func(format string, args ...any)
-	// TopicAliases, if non-nil, rewrites each observation's Topic via
-	// its Resolve method before bucketing. Observations on disk are
-	// untouched. A nil or empty map is a no-op.
-	TopicAliases interface {
-		Resolve(string) string
-	}
+	Embedder       embedding.Embedder
+	EmbeddingModel string
+	Cache          *embedding.Cache
+	CacheSavePath  string
+	ClustersPath   string
+	// ThresholdFor returns the cosine threshold for a given kind. Callers
+	// typically supply identity/rule = 0.85, topic = 0.75.
+	ThresholdFor func(kind string) float32
+	Workers      int
+	Log          func(format string, args ...any)
 	// Fingerprint, if non-empty, is written to the resulting clusters.json
-	// so subsequent runs can detect whether inputs / prompts / models have
-	// changed without rebuilding. Callers compute the expected value with
-	// the same inputs and compare against the on-disk file.
+	// so subsequent runs can detect input/threshold/model changes without
+	// rebuilding.
 	Fingerprint string
 }
 
@@ -49,13 +42,6 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 	members, err := loadAllObservations(observationsDir)
 	if err != nil {
 		return fmt.Errorf("load observations: %w", err)
-	}
-	if p.TopicAliases != nil {
-		for i := range members {
-			if members[i].Kind == "topic" {
-				members[i].Topic = p.TopicAliases.Resolve(members[i].Topic)
-			}
-		}
 	}
 	if len(members) == 0 {
 		return SaveClusters(p.ClustersPath, ClustersFile{
@@ -73,13 +59,7 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 		p.logf("embedding cache save: %v", err)
 	}
 
-	clusters := Bucket(members, func(i int) []float32 { return vectors[i] }, p.CosineThreshold)
-
-	if p.Canonicalizer != nil {
-		if err := p.Canonicalizer.Apply(ctx, clusters); err != nil {
-			p.logf("canonicalize: %v", err)
-		}
-	}
+	clusters := Bucket(members, func(i int) []float32 { return vectors[i] }, p.ThresholdFor)
 
 	return SaveClusters(p.ClustersPath, ClustersFile{
 		SchemaVersion:    SchemaVersion,
@@ -145,11 +125,8 @@ func loadAllObservations(observationsDir string) ([]ClusterMember, error) {
 		}
 		for _, o := range f.Observations {
 			subKey := ""
-			switch o.Kind {
-			case "voice":
+			if o.Kind == "voice" {
 				subKey = o.Context
-			case "topic":
-				subKey = o.Topic
 			}
 			out = append(out, ClusterMember{
 				ObservationHash: embedding.ObservationHash(o.Kind, subKey, o.Text),
@@ -159,7 +136,6 @@ func loadAllObservations(observationsDir string) ([]ClusterMember, error) {
 				Text:            o.Text,
 				Evidence:        o.Evidence,
 				Context:         o.Context,
-				Topic:           o.Topic,
 				Confidence:      o.Confidence,
 			})
 		}

@@ -43,11 +43,15 @@ func ObservationsFingerprints(obsDir string) ([]string, error) {
 	return out, nil
 }
 
-// ClustersFingerprint composes the cache key for clusters.json. canonPromptHash
-// and canonModel may be empty when the canonicalizer is disabled.
-func ClustersFingerprint(obsFingerprints []string, embeddingModel, canonModel, canonPromptHash string, cosineThreshold float32) string {
-	parts := make([]string, 0, len(obsFingerprints)+5)
-	parts = append(parts, "cluster/v1", embeddingModel, canonModel, canonPromptHash, fmt.Sprintf("%g", cosineThreshold))
+// ClustersFingerprint composes the cache key for clusters.json. Clustering
+// is now embedding-only (no LLM stage 2b), so the inputs are the embedding
+// model and the two per-kind cosine thresholds. The "cluster/v2" namespace
+// ensures pre-chunk-3 fingerprints definitionally miss on the first run.
+func ClustersFingerprint(obsFingerprints []string, embeddingModel string, identityRuleThreshold, topicThreshold float32) string {
+	parts := make([]string, 0, len(obsFingerprints)+4)
+	parts = append(parts, "cluster/v2", embeddingModel,
+		fmt.Sprintf("identity_rule=%g", identityRuleThreshold),
+		fmt.Sprintf("topic=%g", topicThreshold))
 	parts = append(parts, obsFingerprints...)
 	return fingerprint.Compute(parts...)
 }

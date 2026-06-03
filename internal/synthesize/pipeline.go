@@ -16,20 +16,19 @@ import (
 // Pipeline orchestrates stage 3: it produces identity.md, rules.md,
 // the capped set of topics/*.md, and index.md.
 //
-// Write strategy:
-//  1. Create ~/.ghost/.tmp-synthesize-<ts>/.
-//  2. Call each generator into the tmpdir (top-level files plus
-//     nested topics/<slug>.md).
-//  3. If ANY generator returned an error, leave the tmpdir in place
-//     (for inspection) and return a partial-failure error. The prior
-//     generation in ~/.ghost/ remains authoritative.
-//  4. If all generators succeeded, wipe ~/.ghost/topics/ (so removed
-//     topics disappear), then rename each file from the tmpdir into
-//     ~/.ghost/ and remove the tmpdir.
-//
-// The topics wipe runs AFTER the partial-failure gate: a failed run
-// must not destroy prior topics. POSIX has no atomic multi-file dir-
-// merge, so step 4 renames file-by-file.
+// Order of operations:
+//  1. Build identity and rules in parallel (they don't depend on topic
+//     slugs).
+//  2. Run topic synthesis: one smart-model call per topic cluster
+//     producing a body that starts with `# <Title>`; slugify each
+//     title; merge any slug collisions and re-synthesize to a
+//     unique-slug fixpoint; fail loudly on any per-cluster error.
+//  3. Rank surviving topics by evidence, cap to MaxTopicEntries.
+//  4. Build index.md from the capped TopicResult list.
+//  5. Atomic write: tmpdir holds every file, then the pipeline wipes
+//     ~/.ghost/topics/ and renames each file into place. If any stage
+//     above failed, the tmpdir is preserved and ~/.ghost/ is left
+//     intact.
 type Pipeline struct {
 	Client          anthropic.Client
 	SmartModel      string
@@ -37,6 +36,14 @@ type Pipeline struct {
 	MinRuleEvidence int
 	MinRuleProjects int
 	MaxTopicEntries int
+	// Log, if non-nil, receives progress lines (e.g. topic merges).
+	Log func(format string, args ...any)
+}
+
+func (p *Pipeline) logf(format string, args ...any) {
+	if p.Log != nil {
+		p.Log(format, args...)
+	}
 }
 
 func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
@@ -53,28 +60,45 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 
 	identityClusters := pickKind(cf.Clusters, "identity")
 	ruleClusters := FilterRules(cf.Clusters, p.MinRuleEvidence, p.MinRuleProjects)
-	topicGroups := GroupTopicClusters(cf.Clusters)
+	topicClusters := pickKind(cf.Clusters, "topic")
 
 	userRules := readUserRules(p.GhostDir)
 
+	// Top-level files first. These never depend on topic slugs.
 	results := []FileResult{
 		BuildIdentity(ctx, p.Client, p.SmartModel, identityClusters),
 		BuildRules(ctx, p.Client, p.SmartModel, ruleClusters, userRules),
 	}
-	ranked := RankTopicsByEvidence(topicGroups)
-	capped := CapTopics(ranked, p.MaxTopicEntries)
 
-	// Only generate topic files that survived the cap. A topic the
-	// index cannot reference is dead weight against the always-loaded
-	// budget.
-	keep := make(map[string][]cluster.Cluster, len(capped))
-	for _, r := range capped {
-		keep[r.Slug] = topicGroups[r.Slug]
+	// Topic synthesis. Slug collisions are merged (not failed); any
+	// per-cluster error or malformed body fails the whole rebuild.
+	topicResults, topicFiles, topicErr := BuildTopics(ctx, p.Client, p.SmartModel, topicClusters, p.logf)
+	if topicErr != nil {
+		// Nothing has been written to tmpDir yet (the write loop runs
+		// below), so there is nothing to preserve for debugging — clean it
+		// up rather than litter GhostDir with empty .tmp-synthesize-* dirs
+		// across repeated failures. Prior ~/.ghost/topics/ is untouched.
+		_ = os.RemoveAll(tmpDir)
+		return fmt.Errorf("synthesize: %w", topicErr)
 	}
+	ranked := RankByEvidence(topicResults)
+	capped := Cap(ranked, p.MaxTopicEntries)
 
-	results = append(results, BuildTopics(ctx, p.Client, p.SmartModel, keep)...)
+	// Re-filter files to the capped set so dropped topics don't get
+	// written.
+	keep := map[string]bool{}
+	for _, t := range capped {
+		keep[fmt.Sprintf("topics/%s.md", t.Slug)] = true
+	}
+	for _, f := range topicFiles {
+		if keep[f.Name] {
+			results = append(results, f)
+		}
+	}
 	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped))
 
+	// Collect any errors from identity/rules/index. Topic errors were
+	// returned above.
 	var failed []string
 	for _, r := range results {
 		if r.Err != nil {

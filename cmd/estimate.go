@@ -93,7 +93,10 @@ func estimateCluster(cfg config.Config, stateDir string) error {
 		bytes += info.Size()
 		files++
 	}
-	report("cluster (canonical phrasing)", cfg.Models.Cheap, int(bytes), files)
+	// Clustering is embedding-only since chunk 3 (no LLM stage). Embeddings
+	// bill input tokens only, and cache hits mean re-runs cost far less than
+	// this upper bound. Local Ollama embedders have no pricing entry (free).
+	reportEmbedding("cluster (embedding)", embeddingModelName(cfg), int(bytes), files)
 	return nil
 }
 
@@ -124,6 +127,21 @@ func report(stage, model string, inputBytes, units int) {
 	outUSD := float64(outTokens) / 1_000_000.0 * p.OutputPerMTok
 	fmt.Printf("%s: model=%s units=%d input~%d tok ($%.4f) output~%d tok ($%.4f) total~$%.4f\n",
 		stage, model, units, tokens, inUSD, outTokens, outUSD, inUSD+outUSD)
+}
+
+// reportEmbedding prints a cost estimate for an embedding-only stage.
+// Embeddings bill input tokens only (no output), so unlike report it
+// omits the output column. A model with no pricing entry (local Ollama)
+// is reported as free.
+func reportEmbedding(stage, model string, inputBytes, units int) {
+	tokens := pricing.EstimateTokens(inputBytes)
+	p, ok := pricing.Lookup(model)
+	if !ok {
+		fmt.Printf("%s: model=%s units=%d input~%d tok (local/no pricing; ~$0)\n", stage, model, units, tokens)
+		return
+	}
+	inUSD := float64(tokens) / 1_000_000.0 * p.InputPerMTok
+	fmt.Printf("%s: model=%s units=%d input~%d tok ($%.4f) total~$%.4f\n", stage, model, units, tokens, inUSD, inUSD)
 }
 
 // nowFn is overridable in tests.

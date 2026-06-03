@@ -38,11 +38,6 @@ type Runner struct {
 	Client anthropic.Client
 	Model  string
 	Log    Logger
-	// KnownTopics is the sorted list of topic slugs that already exist on
-	// disk. The extract prompt receives these as a KNOWN TOPICS block and
-	// is instructed to reuse an existing slug when a candidate is a
-	// near-synonym, closing the slug-drift feedback loop.
-	KnownTopics []string
 }
 
 // Run extracts observations from one conversation. On success, returns
@@ -65,7 +60,7 @@ func (r *Runner) Run(ctx context.Context, src source.Source, c source.Conversati
 		}, nil
 	}
 
-	userPayload := renderPayload(r.KnownTopics, turns)
+	userPayload := renderPayload(turns)
 	raw, err := r.Client.Complete(ctx, r.Model, SystemPrompt(), userPayload)
 	if err != nil {
 		return ObservationsFile{}, fmt.Errorf("anthropic: %w", err)
@@ -136,15 +131,8 @@ func isInjectedSource(evidence string) bool {
 	return !strings.HasPrefix(e, "turn")
 }
 
-func renderPayload(knownTopics []string, turns []source.Turn) string {
+func renderPayload(turns []source.Turn) string {
 	var b strings.Builder
-	if len(knownTopics) > 0 {
-		b.WriteString("KNOWN TOPICS (reuse a slug verbatim if your candidate is a near-synonym):\n")
-		for _, s := range knownTopics {
-			fmt.Fprintf(&b, "- %s\n", s)
-		}
-		b.WriteString("\nTRANSCRIPT:\n")
-	}
 	for _, t := range turns {
 		fmt.Fprintf(&b, "turn %d (%s): %s\n", t.Index, t.Role, t.Text)
 	}

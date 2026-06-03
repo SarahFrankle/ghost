@@ -64,14 +64,13 @@ func TestPipelineProducesClustersJSON(t *testing.T) {
 	cache, _ := loadCacheForTest(t, stateDir, "test-emb")
 
 	p := &Pipeline{
-		Embedder:        fakeEmbedder{},
-		EmbeddingModel:  "test-emb",
-		Cache:           cache,
-		CacheSavePath:   filepath.Join(stateDir, "embeddings.json"),
-		ClustersPath:    filepath.Join(stateDir, "clusters.json"),
-		CosineThreshold: 0.85,
-		Canonicalizer:   nil,
-		Workers:         2,
+		Embedder:       fakeEmbedder{},
+		EmbeddingModel: "test-emb",
+		Cache:          cache,
+		CacheSavePath:  filepath.Join(stateDir, "embeddings.json"),
+		ClustersPath:   filepath.Join(stateDir, "clusters.json"),
+		ThresholdFor:   func(string) float32 { return 0.85 },
+		Workers:        2,
 	}
 	if err := p.Run(context.Background(), obsDir); err != nil {
 		t.Fatal(err)

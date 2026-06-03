@@ -20,6 +20,16 @@ func TestDefaultsWhenNoFile(t *testing.T) {
 	}
 }
 
+func TestDefaultsClusterCosineThresholds(t *testing.T) {
+	d := Defaults()
+	if d.Thresholds.ClusterCosineIdentityRule != 0.85 {
+		t.Fatalf("identity/rule default = %v, want 0.85", d.Thresholds.ClusterCosineIdentityRule)
+	}
+	if d.Thresholds.ClusterCosineTopic != 0.75 {
+		t.Fatalf("topic default = %v, want 0.75", d.Thresholds.ClusterCosineTopic)
+	}
+}
+
 func TestOverridesFromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

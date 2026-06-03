@@ -69,9 +69,7 @@ var showObservationsCmd = &cobra.Command{
 				r.entry.ProcessedAt.Format(time.RFC3339))
 			for _, o := range f.Observations {
 				sub := o.Kind
-				if o.Topic != "" {
-					sub = o.Kind + ":" + o.Topic
-				} else if o.Context != "" {
+				if o.Context != "" {
 					sub = o.Kind + ":" + o.Context
 				}
 				fmt.Printf("  [%s] %s\n      ← %s\n", sub, o.Text, o.Evidence)

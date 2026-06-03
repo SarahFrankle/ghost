@@ -2,7 +2,7 @@ package synthesize
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,23 +11,17 @@ import (
 	"github.com/SarahFrankle/ghost/internal/cluster"
 )
 
-type scriptedClient struct {
-	bySystem map[string]string // system-prompt-substring → response
-	err      map[string]error  // system-prompt-substring → error
+// funcClient routes each Complete call through fn, keyed off the user
+// payload. It holds no mutable state, so it is safe under BuildTopics'
+// parallel per-cluster calls. Tests use prefix/substring matching on the
+// payload to return a distinct, deterministic body per call regardless of
+// the order parallel topic calls arrive in.
+type funcClient struct {
+	fn func(user string) (string, error)
 }
 
-func (s *scriptedClient) Complete(ctx context.Context, model, system, user string) (string, error) {
-	for key, e := range s.err {
-		if strings.Contains(system, key) {
-			return "", e
-		}
-	}
-	for key, resp := range s.bySystem {
-		if strings.Contains(system, key) {
-			return resp, nil
-		}
-	}
-	return "", nil
+func (c *funcClient) Complete(ctx context.Context, model, system, user string) (string, error) {
+	return c.fn(user)
 }
 
 func TestPipelineWritesBothFilesAtomically(t *testing.T) {
@@ -37,14 +31,20 @@ func TestPipelineWritesBothFilesAtomically(t *testing.T) {
 	}
 	cf := cluster.ClustersFile{
 		Clusters: []cluster.Cluster{
-			{Kind: "identity", Canonical: "works at Miro", EvidenceCount: 3, ProjectCount: 2},
+			{Kind: "identity", Canonical: "works at Miro", EvidenceCount: 3, ProjectCount: 2,
+				Members: []cluster.ClusterMember{{Text: "works at Miro", Evidence: "t1", Project: "p"}}},
 			{Kind: "rule", Canonical: "prefer integration tests", EvidenceCount: 3, ProjectCount: 2,
 				Members: []cluster.ClusterMember{{Text: "x", Evidence: "t1", Project: "p"}}},
 		},
 	}
-	client := &scriptedClient{bySystem: map[string]string{
-		"# Identity": "# Identity\n\nworks at Miro.\n",
-		"# Rules":    "# Rules\n\n- prefer integration tests\n",
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.Contains(user, "works at Miro"):
+			return "# Identity\n\nworks at Miro.\n", nil
+		case strings.Contains(user, "prefer integration tests"):
+			return "# Rules\n\n- prefer integration tests\n", nil
+		}
+		return "", fmt.Errorf("unexpected payload: %q", user)
 	}}
 	p := &Pipeline{
 		Client:          client,
@@ -75,15 +75,21 @@ func TestPipelinePreservesPriorGenerationOnPartialFailure(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(ghostDir, "rules.md"), []byte(priorRules), 0o644)
 
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
-		{Kind: "identity", Canonical: "x", EvidenceCount: 1, ProjectCount: 1},
-		{Kind: "rule", Canonical: "y", EvidenceCount: 3, ProjectCount: 2,
-			Members: []cluster.ClusterMember{{Text: "y", Evidence: "t", Project: "p"}}},
+		{Kind: "identity", Canonical: "ident-canon", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "ident-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "rule", Canonical: "rule-canon", EvidenceCount: 3, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "rule-canon", Evidence: "t", Project: "p"}}},
 	}}
 
-	client := &scriptedClient{
-		bySystem: map[string]string{"# Identity": "# Identity\n\nnew\n"},
-		err:      map[string]error{"# Rules": errFakeRulesFail},
-	}
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.Contains(user, "ident-canon"):
+			return "# Identity\n\nnew\n", nil
+		case strings.Contains(user, "rule-canon"):
+			return "", fmt.Errorf("forced rules failure")
+		}
+		return "", fmt.Errorf("unexpected payload: %q", user)
+	}}
 	p := &Pipeline{Client: client, SmartModel: "x", GhostDir: ghostDir,
 		MinRuleEvidence: 2, MinRuleProjects: 2}
 
@@ -110,29 +116,35 @@ func TestPipelinePreservesPriorGenerationOnPartialFailure(t *testing.T) {
 	}
 }
 
-var errFakeRulesFail = &stringErr{"forced rules failure"}
-
-type stringErr struct{ s string }
-
-func (e *stringErr) Error() string { return e.s }
-
 func TestPipelineWritesTopicsSubdir(t *testing.T) {
 	dir := t.TempDir()
-	f := &fakeClient{resp: "# Out\n\nbody.\n"}
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.HasPrefix(user, "RANKED TOPICS"):
+			return "# Index\n", nil
+		case strings.Contains(user, "id-canon"):
+			return "# Identity\n\nbody.\n", nil
+		case strings.Contains(user, "topic-canon"):
+			return "# Testing\n\nbody.\n", nil
+		}
+		return "", fmt.Errorf("unexpected payload: %q", user)
+	}}
 	p := &Pipeline{
-		Client: f, SmartModel: "smart", GhostDir: dir,
+		Client: client, SmartModel: "smart", GhostDir: dir,
 		MinRuleEvidence: 2, MinRuleProjects: 2,
 	}
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
-		{Kind: "identity", Canonical: "id", EvidenceCount: 2, ProjectCount: 2,
-			Members: []cluster.ClusterMember{{Text: "id", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", SubKey: "testing", Canonical: "prefer table-driven",
+		{Kind: "identity", Canonical: "id-canon", EvidenceCount: 2, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "id-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", Canonical: "topic-canon",
 			EvidenceCount: 3, ProjectCount: 2,
-			Members: []cluster.ClusterMember{{Text: "prefer table-driven", Evidence: "t", Project: "p"}}},
+			Members: []cluster.ClusterMember{{Text: "topic-canon", Evidence: "t", Project: "p"}}},
 	}}
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
 	}
+	// Topic filename is derived from the body's H1 ("# Testing"), not from
+	// any upstream slug.
 	for _, want := range []string{"identity.md", "rules.md", "topics/testing.md"} {
 		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
 			t.Fatalf("missing %s: %v", want, err)
@@ -140,72 +152,128 @@ func TestPipelineWritesTopicsSubdir(t *testing.T) {
 	}
 }
 
-func TestPipelinePartialFailureLeavesPriorTopicsIntact(t *testing.T) {
-	dir := t.TempDir()
-	// Seed an existing topics/ directory.
-	if err := os.MkdirAll(filepath.Join(dir, "topics"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "topics", "old.md"), []byte("# Old\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Client that errors on the second Complete call (BuildRules).
-	f := &countingFakeClient{respondAfter: func(n int) (string, error) {
-		if n == 2 {
-			return "", errors.New("boom")
-		}
-		return "# Out\n", nil
-	}}
-	p := &Pipeline{Client: f, SmartModel: "smart", GhostDir: dir, MinRuleEvidence: 1, MinRuleProjects: 1}
-	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
-		{Kind: "identity", Canonical: "x", EvidenceCount: 1, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "x", Evidence: "t", Project: "p"}}},
-		{Kind: "rule", Canonical: "y", EvidenceCount: 1, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "y", Evidence: "t", Project: "p"}}},
-	}}
-	err := p.Run(context.Background(), cf)
-	if err == nil {
-		t.Fatal("expected partial-failure error")
-	}
-	// Prior topics survive.
-	if _, statErr := os.Stat(filepath.Join(dir, "topics", "old.md")); statErr != nil {
-		t.Fatalf("prior topics/old.md was destroyed by failed run: %v", statErr)
-	}
-}
-
-type countingFakeClient struct {
-	n            int
-	respondAfter func(n int) (string, error)
-}
-
-func (c *countingFakeClient) Complete(ctx context.Context, model, system, user string) (string, error) {
-	c.n++
-	return c.respondAfter(c.n)
-}
-
 func TestPipelineRespectsTopicCap(t *testing.T) {
 	dir := t.TempDir()
-	f := &fakeClient{resp: "# Out\n"}
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.HasPrefix(user, "RANKED TOPICS"):
+			return "# Index\n", nil
+		case strings.Contains(user, "alpha-topic"):
+			return "# Alpha\n", nil
+		case strings.Contains(user, "beta-topic"):
+			return "# Beta\n", nil
+		}
+		return "", fmt.Errorf("unexpected payload: %q", user)
+	}}
 	p := &Pipeline{
-		Client: f, SmartModel: "smart", GhostDir: dir,
+		Client: client, SmartModel: "smart", GhostDir: dir,
 		MinRuleEvidence: 1, MinRuleProjects: 1, MaxTopicEntries: 1,
 	}
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
-		{Kind: "topic", SubKey: "a", Canonical: "ca", EvidenceCount: 10, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "ca", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", SubKey: "b", Canonical: "cb", EvidenceCount: 1, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "cb", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", Canonical: "alpha-topic", EvidenceCount: 10, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "alpha-topic", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", Canonical: "beta-topic", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "beta-topic", Evidence: "t", Project: "p"}}},
 	}}
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "topics", "a.md")); err != nil {
-		t.Fatalf("expected topics/a.md (highest evidence): %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "topics", "alpha.md")); err != nil {
+		t.Fatalf("expected topics/alpha.md (highest evidence): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "topics", "b.md")); !os.IsNotExist(err) {
-		t.Fatalf("expected topics/b.md to be capped out, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(dir, "topics", "beta.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected topics/beta.md to be capped out, got err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "index.md")); err != nil {
 		t.Fatalf("expected index.md: %v", err)
+	}
+}
+
+func TestPipelineSlugCollisionMergesAndSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	// Seed a prior topics dir with an unrelated topic.
+	if err := os.MkdirAll(filepath.Join(dir, "topics"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prior := filepath.Join(dir, "topics", "old.md")
+	if err := os.WriteFile(prior, []byte("# Old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both topic clusters produce the title "Conflict" → same slug → merged
+	// into one cluster and re-synthesized. The merged cluster contains both
+	// "first-canon" and "second-canon" members.
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.HasPrefix(user, "RANKED TOPICS"):
+			return "# Index\n", nil
+		case strings.Contains(user, "ident-canon"):
+			return "# Identity\n\nbody.\n", nil
+		case strings.Contains(user, "first-canon") && strings.Contains(user, "second-canon"):
+			// merged re-synthesis call
+			return "# Conflict\n\nmerged.\n", nil
+		case strings.Contains(user, "first-canon"):
+			return "# Conflict\n\nfirst.\n", nil
+		case strings.Contains(user, "second-canon"):
+			return "# Conflict\n\nsecond.\n", nil
+		}
+		return "", fmt.Errorf("unexpected payload: %q", user)
+	}}
+	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
+		{Kind: "identity", Canonical: "ident-canon", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "ident-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", Canonical: "first-canon", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "first-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", Canonical: "second-canon", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "second-canon", Evidence: "t", Project: "p"}}},
+	}}
+	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20}
+	if err := p.Run(context.Background(), cf); err != nil {
+		t.Fatalf("expected successful run after merge, got: %v", err)
+	}
+	// Merged topic should exist.
+	if _, err := os.Stat(filepath.Join(dir, "topics", "conflict.md")); err != nil {
+		t.Fatalf("merged topic conflict.md not found: %v", err)
+	}
+	// Prior unrelated topic is replaced (topics/ wiped on success).
+	if _, err := os.Stat(prior); err == nil {
+		t.Fatal("prior topic old.md should have been removed on successful run")
+	}
+}
+
+func TestPipelineTopicSynthFailurePreservesPriorTopics(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "topics"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prior := filepath.Join(dir, "topics", "old.md")
+	if err := os.WriteFile(prior, []byte("# Old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.HasPrefix(user, "RANKED TOPICS"):
+			return "# Index\n", nil
+		case strings.Contains(user, "ident-canon"):
+			return "# Identity\n\nbody.\n", nil
+		case strings.Contains(user, "boom-canon"):
+			return "", fmt.Errorf("synth boom")
+		default:
+			return "# Other\n\nbody.\n", nil
+		}
+	}}
+	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
+		{Kind: "identity", Canonical: "ident-canon",
+			Members: []cluster.ClusterMember{{Text: "ident-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "topic", Canonical: "boom-canon", EvidenceCount: 1,
+			Members: []cluster.ClusterMember{{Text: "boom-canon", Evidence: "t", Project: "p"}}},
+	}}
+	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20}
+	if err := p.Run(context.Background(), cf); err == nil {
+		t.Fatal("expected error when topic synthesis fails")
+	}
+	if _, err := os.Stat(prior); err != nil {
+		t.Fatalf("prior topic was destroyed by a failed run: %v", err)
 	}
 }

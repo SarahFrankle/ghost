@@ -15,16 +15,18 @@ type Models struct {
 }
 
 type Thresholds struct {
-	RuleMinEvidenceCount   int     `toml:"rule_min_evidence_count"`
-	RuleMinProjectCount    int     `toml:"rule_min_project_count"`
-	VoiceMinEvidenceCount  int     `toml:"voice_min_evidence_count"`
-	ClusterCosineThreshold float64 `toml:"cluster_cosine_threshold"`
-	// CanonicalizeSimilarityThreshold controls how aggressive the
-	// slug-canonicalizer's embedding proposer is. Lower → more
-	// candidate groups proposed → more LLM judge calls. The judge
-	// filters false positives so a generous default is fine. Set to
-	// 0 to disable embedding-based proposals entirely.
-	CanonicalizeSimilarityThreshold float64 `toml:"canonicalize_similarity_threshold"`
+	RuleMinEvidenceCount  int `toml:"rule_min_evidence_count"`
+	RuleMinProjectCount   int `toml:"rule_min_project_count"`
+	VoiceMinEvidenceCount int `toml:"voice_min_evidence_count"`
+	// ClusterCosineIdentityRule is the cosine threshold for bucketing
+	// identity and rule observations. Tight by default: these kinds want
+	// near-duplicate merging only.
+	ClusterCosineIdentityRule float64 `toml:"cluster_cosine_identity_rule"`
+	// ClusterCosineTopic is the cosine threshold for bucketing topic
+	// observations. Looser than identity/rule so semantically related
+	// preferences ("docs should lead with examples" / "example-first
+	// documentation") land in one topic cluster.
+	ClusterCosineTopic float64 `toml:"cluster_cosine_topic"`
 }
 
 type Paths struct {
@@ -62,11 +64,11 @@ func Defaults() Config {
 			Embedding: "voyage-3-lite",
 		},
 		Thresholds: Thresholds{
-			RuleMinEvidenceCount:   2,
-			RuleMinProjectCount:    2,
-			VoiceMinEvidenceCount:  2,
-			ClusterCosineThreshold:          0.85,
-			CanonicalizeSimilarityThreshold: 0.75,
+			RuleMinEvidenceCount:      2,
+			RuleMinProjectCount:       2,
+			VoiceMinEvidenceCount:     2,
+			ClusterCosineIdentityRule: 0.85,
+			ClusterCosineTopic:        0.75,
 		},
 		Paths: Paths{
 			TranscriptsGlob: "~/.claude/projects/**/*.jsonl",
