@@ -1,0 +1,5 @@
+#!/bin/sh
+# Lint gate — runs on every commit (see README "Development").
+# Enable once per clone with: git config core.hooksPath .githooks
+# Runs the same `make check` (lint + build + test) you can run by hand.
+exec make check

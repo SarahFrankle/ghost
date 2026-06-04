@@ -270,6 +270,39 @@ Ghost is local-first by design:
   `VOYAGE_API_KEY`.
 - Nothing is uploaded, synced, or shared between users.
 
+## Development
+
+Work from a local checkout via `make`:
+
+```bash
+make check            # auto-format, then lint + build + test (the full gate)
+make build            # lint, then compile (does not modify files)
+make test             # run the test suite
+make fmt              # auto-format in place
+```
+
+`make lint` runs four checks, all of which must be silent:
+
+- `gofmt` — canonical formatting
+- `go vet` — suspicious constructs (likely bugs)
+- `staticcheck` — bugs and dead code
+- `modernize` — outdated idioms (e.g. `max`, `WaitGroup.Go`)
+
+`staticcheck` and `modernize` run via `go run` at versions pinned in
+the `Makefile`; the first run downloads them, later runs are cached.
+
+`make check` runs automatically on every commit via a git hook.
+Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook blocks the commit if lint, build, or tests fail. Because it
+runs `make check`, it auto-formats the working tree first — if that
+changes a file you'd already staged, re-stage it so the commit picks
+up the formatted version. Bypass once with `git commit --no-verify`.
+
 ## Requirements
 
 - Go 1.25+

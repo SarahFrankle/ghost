@@ -159,13 +159,10 @@ func synthRound(ctx context.Context, synth synthFunc, work []*topicWork) error {
 	out := make([]res, len(todo))
 	var wg sync.WaitGroup
 	for j, idx := range todo {
-		j, idx := j, idx
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			title, body, err := synth(ctx, work[idx].cluster)
 			out[j] = res{idx: idx, title: title, body: body, err: err}
-		}()
+		})
 	}
 	wg.Wait()
 

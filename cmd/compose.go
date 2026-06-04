@@ -217,16 +217,13 @@ func runExtract(ctx context.Context) error {
 	}
 
 	workers := cfg.Batching.ExtractWorkers
-	if workers < 1 {
-		workers = 1
-	}
+	workers = max(workers, 1)
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var processed, failed int
 	var mu sync.Mutex
 
 	for _, j := range pending {
-		j := j
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
