@@ -49,7 +49,7 @@ func LoadCache(path, currentModel string) (*Cache, error) {
 	return c, nil
 }
 
-func (c *Cache) Empty() bool { c.mu.Lock(); defer c.mu.Unlock(); return len(c.entries) == 0 }
+func (c *Cache) Empty() bool   { c.mu.Lock(); defer c.mu.Unlock(); return len(c.entries) == 0 }
 func (c *Cache) Model() string { c.mu.Lock(); defer c.mu.Unlock(); return c.model }
 func (c *Cache) Get(h string) ([]float32, bool) {
 	c.mu.Lock()

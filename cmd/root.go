@@ -8,7 +8,7 @@ var configPath string
 
 var rootCmd = &cobra.Command{
 	Use:   "ghost",
-	Short: "Synthesize identity, rules, topics, and voice from Claude Code transcripts",
+	Short: "Synthesize identity, rules, and topics from Claude Code transcripts",
 }
 
 func Execute() error {

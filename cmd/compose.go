@@ -59,7 +59,14 @@ var composeCmd = &cobra.Command{
 		if err := runCluster(cmd.Context()); err != nil {
 			return err
 		}
-		return runSynthesize(cmd.Context())
+		if err := runSynthesize(cmd.Context()); err != nil {
+			return err
+		}
+		// Each sub-stage records only its own stage in the ledger; the last
+		// writer (synthesize) would otherwise leave `stages: [synthesize]`.
+		// Overwrite with the full pipeline so `ghost status` reflects that a
+		// complete compose ran.
+		return recordCompose(allStages)
 	},
 }
 
@@ -96,12 +103,34 @@ func init() {
 
 	synthesizeCmd.Flags().BoolVar(&composeResynth, "resynth", false, "force re-synthesis of identity/rules/topics/index, skipping fingerprint cache")
 
+	composeCmd.Flags().IntVar(&composeLimit, "limit", 0, "process at most N unprocessed transcripts in the extract stage (0 = all)")
 	composeCmd.Flags().BoolVar(&composeEstimate, "estimate", false, "print per-stage token + cost estimate for the full pipeline and exit")
 
 	rootCmd.AddCommand(composeCmd)
 	rootCmd.AddCommand(extractCmd)
 	rootCmd.AddCommand(clusterCmd)
 	rootCmd.AddCommand(synthesizeCmd)
+}
+
+// recordCompose stamps the ledger's last_compose record with the given stage
+// list. `ghost compose` calls it once after all stages succeed so the record
+// reflects the full pipeline rather than only the final sub-stage's write.
+func recordCompose(stages []string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	outDir, err := paths.Expand(cfg.Paths.OutputDir)
+	if err != nil {
+		return err
+	}
+	ledgerPath := filepath.Join(outDir, ".state", "ledger.json")
+	l, err := ledger.Load(ledgerPath)
+	if err != nil {
+		return err
+	}
+	l.SetLastCompose(stages, "")
+	return l.Save(ledgerPath)
 }
 
 func runExtract(ctx context.Context) error {

@@ -1,23 +1,17 @@
 # ghost
 
-Your Claude Code ghostwriter. Reads your conversation history and
-distills it into four kinds of output:
+Your Claude Code ghostwriter. Ghost reads your Claude Code
+conversation history and distills it into always-loaded context, so
+feedback you gave Claude in one repo months ago shapes how Claude
+behaves in every repo today. No more re-explaining your preferences
+each session.
+
+It produces three kinds of output:
 
 - **identity** — who you are, what you work on (context for Claude)
 - **rules** — how Claude should behave when collaborating with you
-- **topics** — deeper domain guidance, loaded on demand
-- **voice** — how you write in each register (CLI, annual review,
-  Slack, exec brief), loaded only when Claude is ghostwriting on
-  your behalf
-
-The point: feedback you gave Claude in one repo six months ago shapes
-how Claude behaves in every repo today. No more re-explaining your
-preferences each session. And when you ask Claude to draft something
-in your voice, it has actual reference material to mirror — without
-that voice contaminating Claude's normal responses.
-
-> Status: design phase. This README describes the intended UX. See
-> [`docs/specs/`](docs/specs/) for the design.
+- **topics** — deeper domain guidance, loaded on demand when the
+  task matches
 
 ## Install
 
@@ -26,9 +20,12 @@ go install github.com/SarahFrankle/ghost@latest
 ```
 
 Ghost shells out to the `claude` CLI for LLM calls — make sure it's
-installed and logged in (`claude --version`).
+installed and logged in (`claude --version`). It also needs a local
+[Ollama](https://ollama.com) for embeddings by default; see
+[Requirements](#requirements).
 
-Then add these lines to `~/.claude/CLAUDE.md`:
+Add these lines to `~/.claude/CLAUDE.md` so the core files load every
+session:
 
 ```markdown
 @~/.ghost/identity.md
@@ -37,23 +34,32 @@ Then add these lines to `~/.claude/CLAUDE.md`:
 @~/.ghost/index.md
 ```
 
-Topic and voice files are NOT included — Claude reads them on demand
-when the index triggers match.
+Topic files are NOT `@`-included — they load on demand. Install the
+ghost skill so Claude reads `index.md` and lazy-loads the matching
+topic when your task triggers it:
+
+```bash
+ghost install-skill   # writes ~/.claude/skills/ghost/SKILL.md
+```
 
 ## First run
+
+`ghost compose` runs the full pipeline end-to-end. On a large
+backlog you'll want to verify quality on a small batch first;
+`--limit` bounds the extract stage so you can do that in one command:
 
 ```bash
 # See what ghost will read
 ghost status
 
-# Process 5 conversations end-to-end so you can verify quality
+# Process 5 transcripts end-to-end so you can verify quality
 ghost compose --limit 5
 
 # Look at what it produced
-ghost show
+ghost show core
 ```
 
-If you like what you see, drain the rest of your backlog:
+If you like what you see, drain the rest of your backlog in one shot:
 
 ```bash
 ghost compose
@@ -61,80 +67,84 @@ ghost compose
 
 ## Working in batches
 
-Compose splits into per-conversation work (`extract`) and
-whole-corpus work (`cluster`, `synthesize`, `refine`). You can run
-them independently.
+The pipeline splits into per-conversation work (`extract`) and
+whole-corpus work (`cluster`, `synthesize`). Each stage is also a
+standalone command, so you can run them independently:
 
 ```bash
-# Cheap, fast — pull observations from 10 transcripts at a time
-ghost compose --limit 10 --stages extract
-ghost compose --limit 10 --stages extract
-# ... repeat until ghost status shows zero pending ...
+# Cheap, fast — pull observations 10 transcripts at a time
+ghost extract --limit 10
+ghost extract --limit 10
+# ... repeat until `ghost status` shows zero pending ...
 
-# Then roll everything up into profile + rules + topics
-ghost compose --stages cluster,synthesize,refine
+# Then roll everything up into identity + rules + topics
+ghost cluster
+ghost synthesize
 ```
 
 ### Cadence: how often to run each stage
 
-The four stages have very different cost profiles and very different
-"is it worth re-running?" answers. A rough guide:
+The three stages have different cost profiles and different "is it
+worth re-running?" answers. A rough guide:
 
 | Stage | Run how often | Why |
 |---|---|---|
-| `extract` | Often. Daily or after any session worth mining. | Cheap model, per-transcript, idempotent (ledger skips unchanged transcripts), bounded by `--limit`. Running it more often means smaller batches and faster feedback. |
-| `canonicalize` | Before `cluster`, when you notice slug drift (e.g., `tests` and `testing` as separate topics in the index). | Cheap-model judge over candidate slug groups found by string similarity. Writes `.state/slug_aliases.json`. Idempotent — re-runs only re-judge new variants. Safe to skip if no drift. |
-| `cluster` | Periodically. When extract has produced a meaningful chunk of new observations (≥ a few dozen, or weekly). | Whole-corpus embedding + cluster-canonicalization pass. Reads `slug_aliases.json` and applies it at load time so aliased slugs land in the same bucket. Cheap per call but does work over everything; running it every five minutes is wasteful. |
-| `synthesize` | Sparingly. When you actually want your `~/.ghost/` files refreshed — weekly or after a cluster run you care about. | Smart model. This is the expensive step. The output is a regenerable view, so there is no cost to *delaying* a run, only to running it before the corpus has shifted enough to matter. |
-| `refine` | Same cadence as `synthesize`, or skip until you notice fluff. | Smart-model polish pass. Cheap to skip; the underlying content is already correct. |
+| `extract` | Often. Daily or after any session worth mining. | Cheap model, per-transcript, idempotent (the ledger skips unchanged transcripts), bounded by `--limit`. Running it more often means smaller batches and faster feedback. |
+| `cluster` | Periodically. When extract has produced a meaningful chunk of new observations (a few dozen, or weekly). | Whole-corpus embedding + similarity clustering. Cheap per call but does work over everything; running it every five minutes is wasteful. |
+| `synthesize` | Sparingly. When you actually want your `~/.ghost/` files refreshed — weekly, or after a cluster run you care about. | Smart model. This is the expensive step. The output is a regenerable view, so there's no cost to *delaying* a run, only to running it before the corpus has shifted enough to matter. |
 
 Patterns that work:
 
-- **Steady-state.** `ghost compose --stages extract` daily (or wire it
-  into a launchd/cron job). Run `ghost compose --stages cluster,synthesize`
-  weekly. Your `~/.ghost/` files lag your conversations by up to a
-  week, which is fine — these are durable preferences, not a feed.
-- **Catching up after a gap.** `ghost compose --limit 20 --stages extract`
-  repeatedly until `ghost status` is clear, then one
-  `--stages cluster,synthesize` at the end. Don't synthesize after
-  every extract batch — you'll burn smart-model tokens regenerating
-  the same files.
-- **Iterating on a prompt.** Edit a prompt under `prompts/`, then run
-  `--stages cluster,synthesize` (extract is already done; the ledger
-  protects you). The observations layer is the expensive moat; the
-  files on disk are cheap to regenerate.
-- **Re-extracting a specific transcript.** Delete its entry from
-  `.state/ledger.json` and its `.state/observations/*.json` file, then
-  re-run `--stages extract`. Useful after a prompt change that should
-  affect already-mined conversations.
+- **Steady-state.** `ghost extract` daily (or wire it into a
+  launchd/cron job). Run `ghost cluster && ghost synthesize` weekly.
+  Your `~/.ghost/` files lag your conversations by up to a week, which
+  is fine — these are durable preferences, not a feed.
+- **Catching up after a gap.** `ghost extract --limit 20` repeatedly
+  until `ghost status` is clear, then one `ghost cluster && ghost
+  synthesize` at the end. Don't synthesize after every extract batch —
+  you'll burn smart-model tokens regenerating the same files.
+- **Iterating on a prompt.** Edit a prompt under `prompts/`, then
+  rerun the affected stage. Fingerprinting (below) recomputes only
+  what the prompt change touched; the rest is served from cache.
 
 It is always safe to run any stage more often than recommended — the
-ledger and content-hash short-circuits keep wasted work bounded.
-Running stages *less* often is also safe; the materialized view just
-gets staler.
+ledger, content hashes, and artifact fingerprints keep wasted work
+bounded. Running stages *less* often is also safe; the materialized
+view just gets staler.
 
-Other useful flags:
+### Fingerprinting: no more deleting state to re-test
 
-| Flag | Effect |
-|---|---|
-| `--limit N` | Process at most N unprocessed transcripts |
-| `--stages X,Y` | Run a subset of pipeline stages |
-| `--dry-run` | Show what would be processed |
-| `--since 7d` | Only transcripts modified in last N days |
-| `--project NAME` | Only transcripts under one project dir |
+Every derived artifact (observations, clusters, synthesized files)
+carries a fingerprint over its inputs, the prompt version, and the
+model id. On each run, a stage compares fingerprints and recomputes
+only what changed. Editing an extract prompt re-extracts; editing a
+synthesize prompt only re-synthesizes. You rarely need to touch
+`.state/`.
+
+When you *do* want to force a stage to recompute regardless of
+fingerprint (for example, while iterating on a prompt), each stage
+has an override flag:
+
+| Flag | On | Effect |
+|---|---|---|
+| `--limit N` | `extract`, `compose` | Process at most N unprocessed transcripts in the extract stage |
+| `--dry-run` | `extract` | List what would be processed, then exit |
+| `--reobserve` | `extract` | Force re-extract of all transcripts, ignoring the cache |
+| `--recluster` | `cluster` | Force rebuild of clusters, ignoring the cache |
+| `--resynth` | `synthesize` | Force re-synthesis of all outputs, ignoring the cache |
+| `--estimate` | `compose` | Print a per-stage token + cost estimate and exit |
+| `--config PATH` | any | Use a config file other than `~/.ghost/config.toml` |
 
 ## Day-to-day commands
 
 ```bash
-ghost show                 # print identity + rules + manual rules
-ghost topics               # list topic files
-ghost voice                # list voice files (one per register)
-ghost status               # ledger summary
+ghost show core            # print identity.md, rules.md, rules.user.md
+ghost show topics          # list topic files with last-modified
+ghost show observations    # print recent extracted observations (--recent N)
+ghost status               # ledger summary + last compose
 ghost add-rule "<text>"    # pin a manual rule (survives recompose)
-ghost forget <conv>        # drop a conversation's observations
-ghost eval                 # judge synthesis quality vs. held-out transcripts
-ghost config show          # print effective config
-ghost config edit          # open ~/.ghost/config.toml in $EDITOR
+ghost forget <transcript>  # drop a conversation's observations + ledger entry
+ghost install-skill        # (re)write the lazy-loading skill
 ```
 
 ## What lives where
@@ -143,18 +153,16 @@ ghost config edit          # open ~/.ghost/config.toml in $EDITOR
 ~/.ghost/
   identity.md          Who you are, what you work on. Context for Claude. Always loaded.
   rules.md             Synthesized do/don't rules for how Claude works with you. Always loaded.
-  rules.user.md        Your manual rules. Survives recompose. Always loaded.
-  index.md             Lookup table — triggers for topics AND voice. Always loaded.
+  rules.user.md        Your manual rules (ghost add-rule). Survives recompose. Always loaded.
+  index.md             Lookup table — triggers that map tasks to topic files. Always loaded.
   topics/*.md          Deep guidance per domain. Loaded on demand by topic trigger.
-  voice/*.md           Per-register writing style (cli-chat, annual-review, slack, exec-brief).
-                       Loaded ONLY when Claude is ghostwriting in that register.
   config.toml          Tunable thresholds and model selection.
-  .state/              Ledger, observations, clusters. Don't hand-edit.
+  .state/              Ledger, observations, clusters, embeddings. Don't hand-edit.
 ```
 
-### Identity vs. voice vs. rules
+### Identity vs. rules
 
-These three layers do different jobs. The distinction matters:
+These two layers do different jobs, and the distinction matters:
 
 - **Identity** is context *for* Claude. "Sarah works in Kotlin on
   backend services at Miro" helps Claude calibrate its answers. It
@@ -162,48 +170,57 @@ These three layers do different jobs. The distinction matters:
 - **Rules** are instructions *to* Claude. "Break comments at end of
   thought, not mid-sentence" governs Claude's output regardless of
   what's being written.
-- **Voice** is reference material *about* you. Used when Claude is
-  drafting on your behalf in a specific register. Your CLI voice
-  (lowercase, terse) does not cause Claude to start writing
-  lowercase in its own responses — it's only mirrored when Claude
-  is drafting a CLI message for you.
+
+A rule must show up in at least 2 conversations across at least 2
+different projects before it becomes a global rule. Single-project
+guidance lives in `topics/<name>.md` and loads only when you're
+working in that domain.
+
+### Example topic file
+
+Topics are the on-demand layer. `index.md` carries the triggers; the
+topic file carries the guidance. A `~/.ghost/topics/pull-requests.md`
+might look like:
+
+```markdown
+# Pull Requests
+
+- Lead the description with a "why" section before the "what".
+- Keep each PR to one logical change; split unrelated edits.
+- Fill every template section or delete it; never leave it empty.
+```
+
+with a matching line in `index.md`:
+
+```markdown
+## Topics
+- topics/pull-requests.md (triggers: pull-requests, pr description, pr scope, pr template)
+```
+
+Claude consults `index.md` at the start of a task; if a trigger
+matches, it loads that one topic file and nothing else.
 
 ## How it works
 
-Five-stage pipeline:
+Three-stage pipeline:
 
 1. **extract** — per transcript, cheap model. Pulls atomic
    observations with evidence citations.
-2. **canonicalize** — corpus-level, cheap model. Detects near-synonym
-   topic slugs (e.g., `tests` vs `testing`) and records merges in
-   `.state/slug_aliases.json`. Observations on disk are not rewritten;
-   the alias map is applied at read time. Optional — safe to skip if
-   you don't see slug drift.
-3. **cluster** — corpus-level, cheap model. Groups observations, dedups
-   near-duplicates, merges evidence. Applies the alias map when
-   bucketing topic observations.
-4. **synthesize** — corpus-level, smart model. Writes draft
-   `identity.md`, `rules.md`, `index.md`, `topics/*.md`, and
-   `voice/*.md` from clusters. Rules are filtered to those appearing
-   in ≥2 conversations across ≥2 projects; voice files are only
-   generated for registers with enough evidence.
-5. **refine** — per output file, smart model. Orwell-style pass:
-   delete sentences you wouldn't miss.
+2. **cluster** — corpus-level. Embeds observations and groups them by
+   cosine similarity, dedups near-duplicates, and merges evidence.
+   Identity/rule observations use a tight similarity threshold
+   (near-duplicate merging only); topics use a looser one so related
+   preferences ("docs should lead with examples" / "example-first
+   documentation") land in one cluster.
+3. **synthesize** — corpus-level, smart model. Writes
+   `identity.md`, `rules.md`, `index.md`, and `topics/*.md` from the
+   clusters. Rules are filtered to those appearing in at least 2
+   conversations across at least 2 projects.
 
-Observations are an immutable append-only log keyed by content hash.
+Observations are an immutable, append-only log keyed by content hash.
 The files in `~/.ghost/` are a regenerable materialized view. You can
 re-run synthesis with a tweaked prompt without re-paying for
 extraction.
-
-A rule must show up in ≥2 conversations across ≥2 different projects
-before it becomes global. Single-project guidance lives in
-`topics/<name>.md` and loads only when you're working in that domain.
-
-A voice file is only generated for a register with at least
-2 observations across multiple conversations. So `voice/cli-chat.md`
-will fill in first (the most data), while `voice/annual-review.md`
-only appears once you've actually drafted annual reviews with Claude
-enough times to give it patterns to learn from.
 
 ## Updating the model
 
@@ -211,8 +228,8 @@ When Anthropic ships a new model, edit `~/.ghost/config.toml`:
 
 ```toml
 [models]
-cheap = "claude-haiku-X-Y-..."
-smart = "claude-opus-X-Y"
+cheap = "claude-haiku-4-5-20251001"
+smart = "claude-opus-4-7"
 ```
 
 No code change required. Stages reference roles (`cheap` / `smart`),
@@ -221,24 +238,58 @@ not specific model IDs. Ghost passes the resolved ID through to
 
 ## Configuration
 
-See `ghost config show` for the full effective config. Frequently
-tuned knobs:
+Edit `~/.ghost/config.toml`. Frequently tuned knobs:
 
+- `models.cheap` / `models.smart` — model IDs for the extract vs
+  synthesize stages.
+- `models.embedding` — Voyage embedding model, used only when
+  `VOYAGE_API_KEY` is set (otherwise Ollama is used).
 - `thresholds.rule_min_evidence_count` — how many times a rule must
   appear before it can be global. Default 2.
 - `thresholds.rule_min_project_count` — how many different projects.
   Default 2.
-- `thresholds.voice_min_evidence_count` — how many observations
-  before a voice file is generated for a register. Default 2.
-- `batching.default_limit` — implicit `--limit` for `compose`.
+- `thresholds.cluster_cosine_identity_rule` — similarity threshold
+  for bucketing identity/rule observations. Default 0.85 (tight).
+- `thresholds.cluster_cosine_topic` — similarity threshold for
+  bucketing topic observations. Default 0.75 (looser).
+- `index.max_topic_entries` — cap on topics listed in `index.md`.
+  Default 20.
+- `batching.extract_workers` — concurrent extract calls. Default 5.
+
+## Privacy
+
+Ghost is local-first by design:
+
+- LLM calls shell out to your authenticated `claude` CLI, reusing
+  your existing Claude Code subscription. No API key, no separate
+  account.
+- Your transcripts and all derived state (`.state/`, `~/.ghost/`)
+  stay on your machine.
+- Embeddings run locally through Ollama by default. The Voyage
+  embedding backend is opt-in and only active if you set
+  `VOYAGE_API_KEY`.
+- Nothing is uploaded, synced, or shared between users.
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.25+
 - The `claude` CLI installed and logged in (ghost shells out to it,
   reusing your Claude Code subscription)
+- An embedding backend for the `cluster` stage: a local
+  [Ollama](https://ollama.com) (default; pull a model such as
+  `nomic-embed-text`), or a `VOYAGE_API_KEY` to use Voyage instead.
+  Without one, `cluster` fails with a connection error.
 - Claude Code used enough to have transcript history under
   `~/.claude/projects/`
+
+## Limitations
+
+- Claude Code transcripts only. Other agents and sources (Slack,
+  GitHub, Codex) are not ingested.
+- Global, not per-project. Ghost complements project-local
+  `CLAUDE.md` files; it does not replace them.
+- Durable preferences, not a feed. Outputs lag your conversations by
+  however often you run `synthesize`.
 
 ## Not goals
 

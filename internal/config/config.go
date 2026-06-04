@@ -15,9 +15,8 @@ type Models struct {
 }
 
 type Thresholds struct {
-	RuleMinEvidenceCount  int `toml:"rule_min_evidence_count"`
-	RuleMinProjectCount   int `toml:"rule_min_project_count"`
-	VoiceMinEvidenceCount int `toml:"voice_min_evidence_count"`
+	RuleMinEvidenceCount int `toml:"rule_min_evidence_count"`
+	RuleMinProjectCount  int `toml:"rule_min_project_count"`
 	// ClusterCosineIdentityRule is the cosine threshold for bucketing
 	// identity and rule observations. Tight by default: these kinds want
 	// near-duplicate merging only.
@@ -35,16 +34,11 @@ type Paths struct {
 }
 
 type Batching struct {
-	DefaultLimit   int `toml:"default_limit"`
 	ExtractWorkers int `toml:"extract_workers"`
 }
 
 type Index struct {
 	MaxTopicEntries int `toml:"max_topic_entries"`
-}
-
-type Voice struct {
-	Enabled bool `toml:"enabled"`
 }
 
 type Config struct {
@@ -53,7 +47,6 @@ type Config struct {
 	Paths      Paths      `toml:"paths"`
 	Batching   Batching   `toml:"batching"`
 	Index      Index      `toml:"index"`
-	Voice      Voice      `toml:"voice"`
 }
 
 func Defaults() Config {
@@ -66,7 +59,6 @@ func Defaults() Config {
 		Thresholds: Thresholds{
 			RuleMinEvidenceCount:      2,
 			RuleMinProjectCount:       2,
-			VoiceMinEvidenceCount:     2,
 			ClusterCosineIdentityRule: 0.85,
 			ClusterCosineTopic:        0.75,
 		},
@@ -75,11 +67,9 @@ func Defaults() Config {
 			OutputDir:       "~/.ghost",
 		},
 		Batching: Batching{
-			DefaultLimit:   0,
 			ExtractWorkers: 5,
 		},
 		Index: Index{MaxTopicEntries: 20},
-		Voice: Voice{Enabled: false},
 	}
 }
 

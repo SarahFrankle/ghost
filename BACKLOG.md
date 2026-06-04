@@ -59,6 +59,39 @@ Files (when built): `internal/extract/{schema,extract}.go`,
 (`renderTopicPayload` dated formatter), `prompts/synthesize.topics.system.md`.
 Untouched: `slugify.go`, the fixpoint loop, `config.go`, identity / rules.
 
+## Voice — synthesized writing samples — DEFERRED (2026-06-04)
+
+> **Status:** half-scaffolded, never wired end to end. Removed from the public
+> README in chunk 5 so cold readers aren't sold a feature that produces nothing.
+
+**The idea:** a fourth output kind alongside identity / rules / topics. Per
+*register* (cli-chat, annual-review, slack, exec-brief), ghost would keep
+reference samples of how Sarah actually writes, mirrored **only** when Claude is
+ghostwriting on her behalf in that register, never bleeding into Claude's normal
+responses.
+
+**Current state in code (left in place, inert):**
+- `internal/extract/schema.go` accepts `voice` as a valid observation `kind`
+  and requires a `context` field on it (the register).
+- `prompts/extract.system.md` and the synthesize prompts still mention `voice`.
+- **Nothing downstream consumes it.** `synthesize` writes no `voice/*.md`; there
+  is no `ghost voice` command. The dead `Voice.Enabled` /
+  `voice_min_evidence_count` config knobs were removed in chunk 5 hygiene.
+
+So extract *can* tag a voice observation today, but it dead-ends at clustering.
+
+**Why deferred (not built, not ripped out):** matches the "test against real
+data before building" stance. Voice only pays off once Sarah drafts in a fixed
+register often enough that stored samples beat writing from scratch. Until then
+it is speculative surface. Ripping out the extract scaffolding would force a
+corpus re-extract (prompt-hash change) for no benefit, so the inert `kind` stays.
+
+**Build trigger:** the first time Sarah wants Claude to draft in her voice for a
+recurring register (most likely `cli-chat` or `slack`) and the absence of stored
+samples is actually felt. Build against that register: synthesize `voice/<reg>.md`
+from the already-tagged voice observations, add `ghost voice` to list them, and
+re-document in the README.
+
 ## Faceting by activity / role — DECLINED (2026-06-03)
 
 Considered grouping a topic's observations by the user's role (e.g.
