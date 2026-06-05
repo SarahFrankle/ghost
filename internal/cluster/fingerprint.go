@@ -45,11 +45,11 @@ func ObservationsFingerprints(obsDir string) ([]string, error) {
 
 // ClustersFingerprint composes the cache key for clusters.json. Clustering
 // is now embedding-only (no LLM stage 2b), so the inputs are the embedding
-// model and the two per-kind cosine thresholds. The "cluster/v2" namespace
-// ensures pre-chunk-3 fingerprints definitionally miss on the first run.
+// model and the two per-kind cosine thresholds. The "cluster/v3" namespace
+// ensures clusters produced by the pre-best-match algorithm definitionally miss and are recomputed.
 func ClustersFingerprint(obsFingerprints []string, embeddingModel string, identityRuleThreshold, topicThreshold float32) string {
 	parts := make([]string, 0, len(obsFingerprints)+4)
-	parts = append(parts, "cluster/v2", embeddingModel,
+	parts = append(parts, "cluster/v3", embeddingModel,
 		fmt.Sprintf("identity_rule=%g", identityRuleThreshold),
 		fmt.Sprintf("topic=%g", topicThreshold))
 	parts = append(parts, obsFingerprints...)

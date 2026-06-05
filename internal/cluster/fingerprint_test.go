@@ -2,11 +2,13 @@ package cluster
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/SarahFrankle/ghost/internal/extract"
+	"github.com/SarahFrankle/ghost/internal/fingerprint"
 )
 
 func TestClustersFingerprintDistinguishesInputs(t *testing.T) {
@@ -49,6 +51,19 @@ func TestObservationsFingerprintsSortsAndReadsFile(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("position %d: got %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestClustersFingerprintUsesV3Namespace(t *testing.T) {
+	got := ClustersFingerprint([]string{"a"}, "m", 0.85, 0.75)
+	want := fingerprint.Compute(
+		"cluster/v3", "m",
+		fmt.Sprintf("identity_rule=%g", float32(0.85)),
+		fmt.Sprintf("topic=%g", float32(0.75)),
+		"a",
+	)
+	if got != want {
+		t.Fatalf("ClustersFingerprint must use the cluster/v3 namespace:\n got=%s\nwant=%s", got, want)
 	}
 }
 
