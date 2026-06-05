@@ -287,6 +287,25 @@ func TestBuildTopicsClientErrorFails(t *testing.T) {
 	}
 }
 
+func TestBuildTopicsLongTitleTruncatesNotFails(t *testing.T) {
+	// A single over-length title must no longer abort the whole rebuild;
+	// it is truncated to a valid slug and the topic survives.
+	long := "This Title Is Far Too Long To Be A Reasonable Slug For A Topic File"
+	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
+		return long, bodyFor(long), nil
+	}
+	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("x")}, nil)
+	if err != nil {
+		t.Fatalf("buildTopics should not fail on a long title: %v", err)
+	}
+	if len(trs) != 1 || len(files) != 1 {
+		t.Fatalf("want 1 topic/1 file, got %d/%d", len(trs), len(files))
+	}
+	if trs[0].Slug != "this-title-is-far-too-long-to-be-a" {
+		t.Fatalf("slug = %q, want this-title-is-far-too-long-to-be-a", trs[0].Slug)
+	}
+}
+
 func TestBuildTopicsUnslugifiableTitleFails(t *testing.T) {
 	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
 		return "!!!", bodyFor("!!!"), nil

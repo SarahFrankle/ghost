@@ -1,6 +1,9 @@
 package synthesize
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSlugHappyPaths(t *testing.T) {
 	cases := []struct {
@@ -31,12 +34,44 @@ func TestSlugRejects(t *testing.T) {
 		"   ",
 		"12345",
 		"!!!",
-		"this-title-is-far-too-long-to-be-a-reasonable-slug-for-a-topic-file",
 	}
 	for _, in := range cases {
 		if _, err := Slug(in); err == nil {
 			t.Fatalf("Slug(%q) should have rejected", in)
 		}
+	}
+}
+
+func TestSlugTruncatesLongTitlesAtWordBoundary(t *testing.T) {
+	// An over-length title no longer fails; it is truncated to the last
+	// whole word that fits within maxSlugLen, with no trailing dash.
+	in := "This Title Is Far Too Long To Be A Reasonable Slug For A Topic File"
+	got, err := Slug(in)
+	if err != nil {
+		t.Fatalf("Slug(%q) returned error: %v", in, err)
+	}
+	const want = "this-title-is-far-too-long-to-be-a"
+	if got != want {
+		t.Fatalf("Slug(%q) = %q, want %q", in, got, want)
+	}
+	if len(got) > maxSlugLen {
+		t.Fatalf("Slug(%q) = %q exceeds maxSlugLen %d", in, got, maxSlugLen)
+	}
+	if strings.HasSuffix(got, "-") || strings.HasPrefix(got, "-") {
+		t.Fatalf("Slug(%q) = %q has a leading/trailing dash", in, got)
+	}
+}
+
+func TestSlugTruncatesSingleGiantToken(t *testing.T) {
+	// A single token longer than maxSlugLen has no word boundary to cut on,
+	// so it is hard-cut to maxSlugLen rather than rejected.
+	in := strings.Repeat("a", 50)
+	got, err := Slug(in)
+	if err != nil {
+		t.Fatalf("Slug(%q) returned error: %v", in, err)
+	}
+	if want := strings.Repeat("a", maxSlugLen); got != want {
+		t.Fatalf("Slug(50xa) = %q, want %q", got, want)
 	}
 }
 

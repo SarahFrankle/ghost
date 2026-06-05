@@ -11,7 +11,7 @@ Hard rules:
 - The first non-empty line of your output MUST be `# <Title>`. The
   title is a clean noun phrase naming the concept this cluster is
   about — title case, no quoting, no abbreviations, no trailing
-  punctuation, at most 8 words. Examples: `# Error Handling`,
+  punctuation, at most 6 words and 40 characters. Examples: `# Error Handling`,
   `# Pull Requests`, `# Documentation`. The caller derives the
   filename from this title; an unparseable or unreasonable title
   fails the whole topic file.

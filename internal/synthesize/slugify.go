@@ -8,9 +8,9 @@ import (
 	"unicode"
 )
 
-// maxSlugLen is the upper bound on slug length. Longer than this and the
-// title is almost certainly not a clean noun phrase — reject and let the
-// caller fail the topic.
+// maxSlugLen is the upper bound on slug length. A longer result is
+// truncated to the last whole word that fits (see Slug) rather than
+// rejected: one verbose title must never abort the whole topics rebuild.
 const maxSlugLen = 40
 
 // Slug turns a title string into a kebab-case filename slug. Deterministic.
@@ -19,7 +19,9 @@ const maxSlugLen = 40
 //   - lowercase
 //   - any run of non-[a-z0-9] characters collapses to a single '-'
 //   - leading/trailing '-' trimmed
-//   - reject if result is empty, longer than maxSlugLen, or contains no letter
+//   - if longer than maxSlugLen, truncate to the last whole word that
+//     fits (no word boundary in range -> hard cut at maxSlugLen)
+//   - reject if result is empty or contains no letter
 func Slug(title string) (string, error) {
 	var b strings.Builder
 	prevDash := true // treat start of string as if it had a trailing dash, so leading garbage doesn't emit one
@@ -44,7 +46,11 @@ func Slug(title string) (string, error) {
 		return "", fmt.Errorf("slugify: empty result from %q", title)
 	}
 	if len(s) > maxSlugLen {
-		return "", fmt.Errorf("slugify: result %q exceeds max length %d", s, maxSlugLen)
+		cut := s[:maxSlugLen]
+		if i := strings.LastIndexByte(cut, '-'); i > 0 {
+			cut = cut[:i] // drop the partial trailing word
+		}
+		s = strings.TrimRight(cut, "-")
 	}
 	hasLetter := false
 	for _, r := range s {
