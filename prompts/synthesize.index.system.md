@@ -17,9 +17,16 @@ Output format. Emit EXACTLY this structure and nothing else:
 
 Hard rules:
 - One line per topic, in the order given. Do not reorder.
-- "triggers" are short, lowercase phrases a user would mention when
-  the topic applies. Derive them from the canonical phrasings.
-  Include the slug itself plus 2 to 5 additional phrases. No more.
+- "triggers" are the natural, lowercase words a user would actually
+  type when starting a task this topic should inform: the broad
+  subject plus its common synonyms and short forms (for a testing
+  topic: "tests", "testing", "write a test", "unit test") -- NOT the
+  topic's internal specifics (avoid coined phrases like "paired
+  constants" or "suffix naming"). The canonical phrasings tell you the
+  subject; do not copy their wording as triggers.
+- Always include the broad subject word on its own. Give 3 to 6
+  triggers total. Include the slug only if it reads as a phrase a user
+  would actually type; skip it when it is coined jargon.
 - No prose, no preamble, no closing remarks. Just the heading and
   the list.
 - No em-dashes anywhere. Use commas between triggers and parentheses

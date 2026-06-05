@@ -3,10 +3,12 @@ package synthesize
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/SarahFrankle/ghost/internal/cluster"
 )
@@ -111,7 +113,7 @@ func TestBuildTopicsDistinctNoMerge(t *testing.T) {
 		ti := titles[c.Canonical]
 		return ti, bodyFor(ti), nil
 	}
-	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("errs"), tc("docs")}, nil)
+	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("errs"), tc("docs")}, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("buildTopics error: %v", err)
 	}
@@ -137,7 +139,7 @@ func TestBuildTopicsMergesCollidingClusters(t *testing.T) {
 		}
 		return ti, bodyFor(ti), nil
 	}
-	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("a"), tc("b")}, nil)
+	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("a"), tc("b")}, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("buildTopics error: %v", err)
 	}
@@ -173,7 +175,7 @@ func TestBuildTopicsFixpointSecondOrderMerge(t *testing.T) {
 		}
 		return ti, bodyFor(ti), nil
 	}
-	trs, _, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("a"), tc("b"), tc("c")}, nil)
+	trs, _, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("a"), tc("b"), tc("c")}, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("buildTopics error: %v", err)
 	}
@@ -217,7 +219,7 @@ func TestBuildTopicsCachesUnmergedBodies(t *testing.T) {
 			return "Testing", bodyFor("Testing"), nil
 		}
 	}
-	_, _, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("a"), tc("b"), tc("d"), tc("e")}, nil)
+	_, _, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("a"), tc("b"), tc("d"), tc("e")}, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("buildTopics error: %v", err)
 	}
@@ -248,11 +250,11 @@ func TestBuildTopicsDeterministic(t *testing.T) {
 		return ti, bodyFor(ti), nil
 	}
 	in := []cluster.Cluster{tc("a"), tc("b"), tc("c")}
-	r1, _, err := buildTopics(context.Background(), synth, in, nil)
+	r1, _, err := buildTopics(context.Background(), synth, in, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("run 1 error: %v", err)
 	}
-	r2, _, err := buildTopics(context.Background(), synth, in, nil)
+	r2, _, err := buildTopics(context.Background(), synth, in, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("run 2 error: %v", err)
 	}
@@ -271,9 +273,84 @@ func TestBuildTopicsDeterministic(t *testing.T) {
 	}
 }
 
+func TestBuildTopicsBoundsConcurrency(t *testing.T) {
+	// Each synthesis is a `claude` subprocess. An unbounded fan-out starves
+	// the parent-side stdin writers and trips claude's no-stdin timeout, so
+	// synthesis must never run more than `workers` clusters at once. Distinct
+	// markers give distinct slugs (no merge), so this is a single round of
+	// len(cs) synths — enough to exceed the limit if the cap is missing.
+	const (
+		nClusters = 16
+		limit     = 4
+	)
+	var mu sync.Mutex
+	var inflight, maxInflight int
+	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
+		mu.Lock()
+		inflight++
+		if inflight > maxInflight {
+			maxInflight = inflight
+		}
+		mu.Unlock()
+		// Hold the slot so concurrent launches actually overlap.
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		inflight--
+		mu.Unlock()
+		return c.Canonical, bodyFor(c.Canonical), nil
+	}
+	cs := make([]cluster.Cluster, nClusters)
+	for i := range cs {
+		cs[i] = tc(fmt.Sprintf("t%02d", i))
+	}
+	if _, _, err := buildTopics(context.Background(), synth, cs, limit, nil, nil); err != nil {
+		t.Fatalf("buildTopics error: %v", err)
+	}
+	if maxInflight > limit {
+		t.Fatalf("observed %d concurrent syntheses, want <= %d", maxInflight, limit)
+	}
+}
+
+func TestBuildTopicsReportsProgress(t *testing.T) {
+	// Each synthesized topic must fire the progress callback once, with a
+	// monotonic count and a stable total, so a long otherwise-silent run can
+	// render an in-place counter. Distinct markers => distinct slugs => one
+	// round of n synths.
+	const n = 5
+	cs := make([]cluster.Cluster, n)
+	for i := range cs {
+		cs[i] = tc(fmt.Sprintf("t%02d", i))
+	}
+	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
+		return c.Canonical, bodyFor(c.Canonical), nil
+	}
+	var mu sync.Mutex
+	var calls, maxDone int
+	progress := func(done, total int) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if total != n {
+			t.Errorf("progress total = %d, want %d", total, n)
+		}
+		if done > maxDone {
+			maxDone = done
+		}
+	}
+	if _, _, err := buildTopics(context.Background(), synth, cs, 4, nil, progress); err != nil {
+		t.Fatalf("buildTopics error: %v", err)
+	}
+	if calls != n {
+		t.Fatalf("progress fired %d times, want %d", calls, n)
+	}
+	if maxDone != n {
+		t.Fatalf("max done = %d, want %d", maxDone, n)
+	}
+}
+
 func TestBuildTopicsMalformedBodyFails(t *testing.T) {
 	s := &scriptedClient{responses: []string{"Some preamble.\n\n# Title\n"}}
-	_, _, err := BuildTopics(context.Background(), s, "smart", []cluster.Cluster{tc("c")}, nil)
+	_, _, err := BuildTopics(context.Background(), s, "smart", []cluster.Cluster{tc("c")}, 4, nil, nil)
 	if err == nil {
 		t.Fatal("BuildTopics should fail when body's first line is not an H1")
 	}
@@ -281,7 +358,7 @@ func TestBuildTopicsMalformedBodyFails(t *testing.T) {
 
 func TestBuildTopicsClientErrorFails(t *testing.T) {
 	s := &scriptedClient{responses: []string{""}, errs: []error{errors.New("boom")}}
-	_, _, err := BuildTopics(context.Background(), s, "smart", []cluster.Cluster{tc("c")}, nil)
+	_, _, err := BuildTopics(context.Background(), s, "smart", []cluster.Cluster{tc("c")}, 4, nil, nil)
 	if err == nil {
 		t.Fatal("BuildTopics should fail when the client errors")
 	}
@@ -294,7 +371,7 @@ func TestBuildTopicsLongTitleTruncatesNotFails(t *testing.T) {
 	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
 		return long, bodyFor(long), nil
 	}
-	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("x")}, nil)
+	trs, files, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("x")}, 4, nil, nil)
 	if err != nil {
 		t.Fatalf("buildTopics should not fail on a long title: %v", err)
 	}
@@ -310,7 +387,7 @@ func TestBuildTopicsUnslugifiableTitleFails(t *testing.T) {
 	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
 		return "!!!", bodyFor("!!!"), nil
 	}
-	_, _, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("x")}, nil)
+	_, _, err := buildTopics(context.Background(), synth, []cluster.Cluster{tc("x")}, 4, nil, nil)
 	if err == nil {
 		t.Fatal("buildTopics should fail when a title does not slugify")
 	}

@@ -83,6 +83,7 @@ func (p *Pipeline) embedAll(ctx context.Context, members []ClusterMember) ([][]f
 		missingIdx = append(missingIdx, i)
 		missingTexts = append(missingTexts, m.Text)
 	}
+	p.logf("cluster: embedding %d new observation(s), %d cached", len(missingIdx), len(members)-len(missingIdx))
 	if len(missingIdx) == 0 {
 		return out, nil
 	}

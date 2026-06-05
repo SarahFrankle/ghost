@@ -8,8 +8,9 @@ MODERNIZE   := golang.org/x/tools/gopls/internal/analysis/modernize/cmd/moderniz
 .PHONY: build test lint fmt check
 .NOTPARALLEL:          # check's steps must run in order (fmt before lint)
 
-build: lint            ## Compile (lints first).
+build: lint            ## Compile (lints first) and refresh the ./ghost binary.
 	go build ./...
+	go build -o ghost .
 
 test:                  ## Run the test suite.
 	go test ./...

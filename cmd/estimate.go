@@ -111,7 +111,13 @@ func estimateSynthesize(cfg config.Config, stateDir string) error {
 	if err := json.Unmarshal(body, &cf); err != nil {
 		return err
 	}
-	report("synthesize", cfg.Models.Smart, len(body), len(cf.Clusters))
+	// Topic synthesis dominates the call volume, so price the stage at the
+	// topic model (identity/rules/index are 3 calls on Smart — negligible).
+	synthModel := cfg.Models.Topic
+	if synthModel == "" {
+		synthModel = cfg.Models.Smart
+	}
+	report("synthesize", synthModel, len(body), len(cf.Clusters))
 	return nil
 }
 

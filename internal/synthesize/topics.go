@@ -31,7 +31,7 @@ type synthFunc func(ctx context.Context, c cluster.Cluster) (title, body string,
 // BuildTopics synthesizes the kind=topic clusters into one file per
 // surviving topic. It adapts the smart-model client into a synthFunc and
 // delegates to buildTopics. The public result shape is unchanged.
-func BuildTopics(ctx context.Context, client anthropic.Client, model string, clusters []cluster.Cluster, logf func(string, ...any)) ([]TopicResult, []FileResult, error) {
+func BuildTopics(ctx context.Context, client anthropic.Client, model string, clusters []cluster.Cluster, workers int, logf func(string, ...any), progress func(done, total int)) ([]TopicResult, []FileResult, error) {
 	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
 		raw, err := client.Complete(ctx, model, prompts.SynthesizeTopicsSystem(), renderTopicPayload(c))
 		if err != nil {
@@ -44,7 +44,7 @@ func BuildTopics(ctx context.Context, client anthropic.Client, model string, clu
 		}
 		return title, body, nil
 	}
-	return buildTopics(ctx, synth, clusters, logf)
+	return buildTopics(ctx, synth, clusters, workers, logf, progress)
 }
 
 // topicWork is one cluster moving through the merge loop, carrying its
@@ -72,7 +72,7 @@ type topicWork struct {
 // Any synthesis error, malformed body (no leading H1), or slugifier
 // reject fails the whole topics rebuild: index.md references the slug
 // set, so partial success is not a useful state.
-func buildTopics(ctx context.Context, synth synthFunc, clusters []cluster.Cluster, logf func(string, ...any)) ([]TopicResult, []FileResult, error) {
+func buildTopics(ctx context.Context, synth synthFunc, clusters []cluster.Cluster, workers int, logf func(string, ...any), progress func(done, total int)) ([]TopicResult, []FileResult, error) {
 	work := make([]*topicWork, 0, len(clusters))
 	for _, c := range clusters {
 		if c.Kind == "topic" {
@@ -83,8 +83,12 @@ func buildTopics(ctx context.Context, synth synthFunc, clusters []cluster.Cluste
 		return nil, nil, nil
 	}
 
+	if logf != nil {
+		logf("synthesize: topics: %d cluster(s) to synthesize", len(work))
+	}
+
 	for {
-		if err := synthRound(ctx, synth, work); err != nil {
+		if err := synthRound(ctx, synth, work, workers, progress); err != nil {
 			return nil, nil, err
 		}
 
@@ -139,7 +143,7 @@ func buildTopics(ctx context.Context, synth synthFunc, clusters []cluster.Cluste
 
 // synthRound synthesizes every cluster in work that has no cached body,
 // in parallel. Any error fails the round.
-func synthRound(ctx context.Context, synth synthFunc, work []*topicWork) error {
+func synthRound(ctx context.Context, synth synthFunc, work []*topicWork, workers int, progress func(done, total int)) error {
 	type res struct {
 		idx   int
 		title string
@@ -156,12 +160,32 @@ func synthRound(ctx context.Context, synth synthFunc, work []*topicWork) error {
 		return nil
 	}
 
+	// Bound the fan-out: each synth is a `claude` subprocess, and launching
+	// every cluster at once starves the parent-side stdin writers, tripping
+	// claude's no-stdin timeout. A semaphore caps in-flight subprocesses,
+	// matching the extract stage.
+	workers = max(workers, 1)
+	sem := make(chan struct{}, workers)
 	out := make([]res, len(todo))
+	total := len(todo)
+	var progressMu sync.Mutex
+	var done int
 	var wg sync.WaitGroup
 	for j, idx := range todo {
+		sem <- struct{}{}
 		wg.Go(func() {
+			defer func() { <-sem }()
 			title, body, err := synth(ctx, work[idx].cluster)
 			out[j] = res{idx: idx, title: title, body: body, err: err}
+			// One in-place counter update per completion; the caller decides
+			// how to render it (rewriting line on a TTY, nothing otherwise).
+			if progress != nil {
+				progressMu.Lock()
+				done++
+				n := done
+				progressMu.Unlock()
+				progress(n, total)
+			}
 		})
 	}
 	wg.Wait()

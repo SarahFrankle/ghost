@@ -9,8 +9,13 @@ import (
 )
 
 type Models struct {
-	Cheap     string `toml:"cheap"`
-	Smart     string `toml:"smart"`
+	Cheap string `toml:"cheap"`
+	Smart string `toml:"smart"`
+	// Topic is the model for topic synthesis — the highest-volume synth
+	// stage (one call per topic cluster). It defaults to a mid-tier model
+	// since topic bodies are summaries of already-extracted observations;
+	// identity/rules/index keep using Smart. Empty falls back to Smart.
+	Topic     string `toml:"topic"`
 	Embedding string `toml:"embedding"`
 }
 
@@ -35,6 +40,11 @@ type Paths struct {
 
 type Batching struct {
 	ExtractWorkers int `toml:"extract_workers"`
+	// SynthWorkers bounds concurrent topic-synthesis subprocesses. Higher
+	// than ExtractWorkers is fine since the stdin race that capped fan-out
+	// is fixed at the client; this only guards system/API load. Values < 1
+	// are treated as 1.
+	SynthWorkers int `toml:"synth_workers"`
 }
 
 type Index struct {
@@ -53,7 +63,8 @@ func Defaults() Config {
 	return Config{
 		Models: Models{
 			Cheap:     "claude-haiku-4-5-20251001",
-			Smart:     "claude-opus-4-7",
+			Smart:     "claude-opus-4-8",
+			Topic:     "claude-sonnet-4-6",
 			Embedding: "voyage-3-lite",
 		},
 		Thresholds: Thresholds{
@@ -68,6 +79,7 @@ func Defaults() Config {
 		},
 		Batching: Batching{
 			ExtractWorkers: 5,
+			SynthWorkers:   8,
 		},
 		Index: Index{MaxTopicEntries: 20},
 	}

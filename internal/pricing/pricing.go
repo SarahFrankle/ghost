@@ -13,6 +13,7 @@ type Price struct {
 // still resolve.
 var Table = map[string]Price{
 	"claude-haiku-4-5":  {InputPerMTok: 1.0, OutputPerMTok: 5.0},
+	"claude-opus-4-8":   {InputPerMTok: 15.0, OutputPerMTok: 75.0},
 	"claude-opus-4-7":   {InputPerMTok: 15.0, OutputPerMTok: 75.0},
 	"claude-sonnet-4-6": {InputPerMTok: 3.0, OutputPerMTok: 15.0},
 	"voyage-3-lite":     {InputPerMTok: 0.02, OutputPerMTok: 0.0},

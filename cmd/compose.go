@@ -221,6 +221,7 @@ func runExtract(ctx context.Context) error {
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var processed, failed int
+	total := len(pending)
 	var mu sync.Mutex
 
 	for _, j := range pending {
@@ -262,7 +263,7 @@ func runExtract(ctx context.Context) error {
 				log.Printf("ledger save after %s: %v", j.c.ID, err)
 			}
 			processed++
-			fmt.Printf("extracted %d observation(s) from %s\n", len(result.Observations), filepath.Base(j.c.ID))
+			fmt.Printf("extracted %d observation(s) from %s (%d/%d)\n", len(result.Observations), filepath.Base(j.c.ID), processed, total)
 		}()
 	}
 	wg.Wait()
@@ -422,7 +423,7 @@ func runSynthesize(ctx context.Context) error {
 		return fmt.Errorf("load clusters.json (run `ghost cluster` first): %w", err)
 	}
 
-	expectedFP := synthesizeFingerprint(cf.Fingerprint, cfg.Models.Smart, cfg.Thresholds.RuleMinEvidenceCount, cfg.Thresholds.RuleMinProjectCount, cfg.Index.MaxTopicEntries)
+	expectedFP := synthesizeFingerprint(cf.Fingerprint, cfg.Models.Smart, cfg.Models.Topic, cfg.Thresholds.RuleMinEvidenceCount, cfg.Thresholds.RuleMinProjectCount, cfg.Index.MaxTopicEntries)
 	sidecarPath := filepath.Join(stateDir, "synthesize.fingerprint")
 	if !composeResynth && synthesizeOutputsFresh(outDir, sidecarPath, expectedFP) {
 		fmt.Println("synthesize: up to date (fingerprint match)")
@@ -436,11 +437,14 @@ func runSynthesize(ctx context.Context) error {
 	p := &synthesize.Pipeline{
 		Client:          client,
 		SmartModel:      cfg.Models.Smart,
+		TopicModel:      cfg.Models.Topic,
 		GhostDir:        outDir,
 		MinRuleEvidence: cfg.Thresholds.RuleMinEvidenceCount,
 		MinRuleProjects: cfg.Thresholds.RuleMinProjectCount,
 		MaxTopicEntries: cfg.Index.MaxTopicEntries,
+		Workers:         cfg.Batching.SynthWorkers,
 		Log:             log.Printf,
+		Progress:        synthProgress(),
 	}
 	if err := p.Run(ctx, cf); err != nil {
 		return err
@@ -461,17 +465,36 @@ func runSynthesize(ctx context.Context) error {
 	return nil
 }
 
+// synthProgress returns an in-place topic-synthesis counter that rewrites a
+// single stderr line (e.g. "synthesize: topics 37/141"). When stderr is not a
+// terminal (piped, redirected, CI) it returns nil so synthesis stays quiet
+// rather than spraying carriage returns into a log file; the per-stage log
+// lines already mark coarse progress there.
+func synthProgress() func(done, total int) {
+	fi, err := os.Stderr.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return nil
+	}
+	return func(done, total int) {
+		fmt.Fprintf(os.Stderr, "\r\033[Ksynthesize: topics %d/%d", done, total)
+		if done == total {
+			fmt.Fprintln(os.Stderr)
+		}
+	}
+}
+
 // synthesizeFingerprint composes the cache key for synthesize outputs.
 // Inputs: the clusters.json fingerprint (which already captures observation
-// state, embedding model, and the per-kind cosine thresholds), the smart
-// model, the four synth prompts, and the structural thresholds that change
-// which clusters survive to be rendered. The "synthesize/v2" namespace
+// state, embedding model, and the per-kind cosine thresholds), the smart and
+// topic models, the four synth prompts, and the structural thresholds that
+// change which clusters survive to be rendered. The "synthesize/v2" namespace
 // guarantees stale chunk-2 caches miss on the first chunk-3 run.
-func synthesizeFingerprint(clustersFP, smartModel string, minRuleEvidence, minRuleProjects, maxTopicEntries int) string {
+func synthesizeFingerprint(clustersFP, smartModel, topicModel string, minRuleEvidence, minRuleProjects, maxTopicEntries int) string {
 	return fingerprint.Compute(
 		"synthesize/v2",
 		clustersFP,
 		smartModel,
+		topicModel,
 		prompts.SynthesizeIdentitySystemHash(),
 		prompts.SynthesizeRulesSystemHash(),
 		prompts.SynthesizeTopicsSystemHash(),

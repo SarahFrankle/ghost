@@ -19,7 +19,7 @@ import (
 // Order of operations:
 //  1. Build identity and rules in parallel (they don't depend on topic
 //     slugs).
-//  2. Run topic synthesis: one smart-model call per topic cluster
+//  2. Run topic synthesis: one topic-model call per topic cluster
 //     producing a body that starts with `# <Title>`; slugify each
 //     title; merge any slug collisions and re-synthesize to a
 //     unique-slug fixpoint; fail loudly on any per-cluster error.
@@ -30,14 +30,28 @@ import (
 //     above failed, the tmpdir is preserved and ~/.ghost/ is left
 //     intact.
 type Pipeline struct {
-	Client          anthropic.Client
-	SmartModel      string
+	Client     anthropic.Client
+	SmartModel string
+	// TopicModel is used for topic synthesis (the high-volume stage).
+	// Empty falls back to SmartModel so callers that only set SmartModel
+	// keep their old behavior.
+	TopicModel      string
 	GhostDir        string
 	MinRuleEvidence int
 	MinRuleProjects int
 	MaxTopicEntries int
+	// Workers bounds how many topic clusters are synthesized concurrently.
+	// Each synthesis is a `claude` subprocess; an unbounded fan-out starves
+	// the parent-side stdin writers and trips claude's no-stdin timeout, so
+	// this cap is load-bearing, not just a tuning knob. Values < 1 are
+	// treated as 1.
+	Workers int
 	// Log, if non-nil, receives progress lines (e.g. topic merges).
 	Log func(format string, args ...any)
+	// Progress, if non-nil, is called once per synthesized topic with the
+	// running count, for an in-place counter. The caller owns rendering
+	// (rewriting line on a TTY, nothing when output is not a terminal).
+	Progress func(done, total int)
 }
 
 func (p *Pipeline) logf(format string, args ...any) {
@@ -65,14 +79,19 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 	userRules := readUserRules(p.GhostDir)
 
 	// Top-level files first. These never depend on topic slugs.
-	results := []FileResult{
-		BuildIdentity(ctx, p.Client, p.SmartModel, identityClusters),
-		BuildRules(ctx, p.Client, p.SmartModel, ruleClusters, userRules),
-	}
+	p.logf("synthesize: identity.md (%d cluster(s))", len(identityClusters))
+	identity := BuildIdentity(ctx, p.Client, p.SmartModel, identityClusters)
+	p.logf("synthesize: rules.md (%d cluster(s))", len(ruleClusters))
+	rules := BuildRules(ctx, p.Client, p.SmartModel, ruleClusters, userRules)
+	results := []FileResult{identity, rules}
 
 	// Topic synthesis. Slug collisions are merged (not failed); any
 	// per-cluster error or malformed body fails the whole rebuild.
-	topicResults, topicFiles, topicErr := BuildTopics(ctx, p.Client, p.SmartModel, topicClusters, p.logf)
+	topicModel := p.TopicModel
+	if topicModel == "" {
+		topicModel = p.SmartModel
+	}
+	topicResults, topicFiles, topicErr := BuildTopics(ctx, p.Client, topicModel, topicClusters, p.Workers, p.logf, p.Progress)
 	if topicErr != nil {
 		// Nothing has been written to tmpDir yet (the write loop runs
 		// below), so there is nothing to preserve for debugging — clean it
@@ -95,6 +114,7 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 			results = append(results, f)
 		}
 	}
+	p.logf("synthesize: index.md (%d topic(s))", len(capped))
 	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped))
 
 	// Collect any errors from identity/rules/index. Topic errors were

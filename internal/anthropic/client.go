@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -56,7 +58,23 @@ func (c *cliClient) Complete(ctx context.Context, model, system, user string) (s
 		"--no-session-persistence",
 	}
 	cmd := exec.CommandContext(ctx, c.bin, args...)
-	cmd.Stdin = strings.NewReader(user)
+
+	// Hand the payload to claude as a real file (fd 0), not a strings.Reader.
+	// os/exec connects an *os.File stdin directly to the child; any other
+	// io.Reader instead spawns a parent-side copier goroutine. Under a wide
+	// concurrent fan-out those goroutines can be starved past claude's 3s
+	// stdin-wait, so claude exits with "no stdin data received". A file the
+	// child opens itself removes that race regardless of concurrency.
+	stdin, err := writeTempStdin(user)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = stdin.Close()
+		_ = os.Remove(stdin.Name())
+	}()
+	cmd.Stdin = stdin
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -64,4 +82,25 @@ func (c *cliClient) Complete(ctx context.Context, model, system, user string) (s
 		return "", fmt.Errorf("claude exec: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+// writeTempStdin writes payload to a temp file and rewinds it to the start,
+// returning the open *os.File for use as a child process's stdin. The caller
+// owns closing and removing the file.
+func writeTempStdin(payload string) (*os.File, error) {
+	f, err := os.CreateTemp("", "ghost-stdin-*")
+	if err != nil {
+		return nil, fmt.Errorf("create stdin temp: %w", err)
+	}
+	if _, err := io.WriteString(f, payload); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return nil, fmt.Errorf("write stdin temp: %w", err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return nil, fmt.Errorf("rewind stdin temp: %w", err)
+	}
+	return f, nil
 }
