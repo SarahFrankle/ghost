@@ -12,20 +12,27 @@ import (
 	"github.com/SarahFrankle/ghost/internal/extract"
 )
 
-// Pipeline owns stage 2 end-to-end: load observation files, embed each
-// observation (cache-aware), bucket per-kind, then write clusters.json.
-// Topic observations bucket by cosine on .Text alone (no SubKey).
+// Pipeline owns stage 2 end-to-end: load observation files, then split by
+// kind. Identity/rule/voice observations embed (cache-aware) and bucket by
+// cosine; topic observations bypass embedding entirely and route through
+// Topics (label→theme→group). The merged cluster set is written to
+// clusters.json.
 type Pipeline struct {
 	Embedder       embedding.Embedder
 	EmbeddingModel string
 	Cache          *embedding.Cache
 	CacheSavePath  string
 	ClustersPath   string
-	// ThresholdFor returns the cosine threshold for a given kind. Callers
-	// typically supply identity/rule = 0.85, topic = 0.75.
+	// ThresholdFor returns the cosine threshold for a given kind. Only
+	// identity/rule/voice reach it now (topics no longer cosine-cluster).
 	ThresholdFor func(kind string) float32
 	Workers      int
 	Log          func(format string, args ...any)
+	// Topics, if non-nil, produces topic clusters via label→theme→group.
+	// Topic observations bypass embedding/cosine entirely. When nil, topic
+	// observations are dropped (no topic clusters) — callers set it in
+	// production.
+	Topics *TopicGrouper
 	// Fingerprint, if non-empty, is written to the resulting clusters.json
 	// so subsequent runs can detect input/threshold/model changes without
 	// rebuilding.
@@ -48,18 +55,38 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 			SchemaVersion:    SchemaVersion,
 			EmbeddingModelID: p.EmbeddingModel,
 			BuiltAt:          time.Now().UTC(),
+			Fingerprint:      p.Fingerprint,
 		})
 	}
 
-	vectors, err := p.embedAll(ctx, members)
-	if err != nil {
-		return fmt.Errorf("embed: %w", err)
-	}
-	if err := p.Cache.Save(p.CacheSavePath); err != nil {
-		p.logf("embedding cache save: %v", err)
+	var topicMembers, rest []ClusterMember
+	for _, m := range members {
+		if m.Kind == "topic" {
+			topicMembers = append(topicMembers, m)
+		} else {
+			rest = append(rest, m)
+		}
 	}
 
-	clusters := Bucket(members, func(i int) []float32 { return vectors[i] }, p.ThresholdFor)
+	var clusters []Cluster
+	if len(rest) > 0 {
+		vectors, err := p.embedAll(ctx, rest)
+		if err != nil {
+			return fmt.Errorf("embed: %w", err)
+		}
+		if err := p.Cache.Save(p.CacheSavePath); err != nil {
+			p.logf("embedding cache save: %v", err)
+		}
+		clusters = append(clusters, Bucket(rest, func(i int) []float32 { return vectors[i] }, p.ThresholdFor)...)
+	}
+
+	if p.Topics != nil && len(topicMembers) > 0 {
+		topicClusters, err := p.Topics.Run(ctx, topicMembers)
+		if err != nil {
+			return fmt.Errorf("topics: %w", err)
+		}
+		clusters = append(clusters, topicClusters...)
+	}
 
 	return SaveClusters(p.ClustersPath, ClustersFile{
 		SchemaVersion:    SchemaVersion,
@@ -100,6 +127,13 @@ func (p *Pipeline) embedAll(ctx context.Context, members []ClusterMember) ([][]f
 		p.Cache.Put(members[idx].ObservationHash, vecs[j])
 	}
 	return out, nil
+}
+
+// LoadObservations walks observationsDir for *.json observation files and
+// returns the flattened ClusterMember slice. Exported so commands (e.g.
+// topics-preview) can load members without rebuilding clusters.json.
+func LoadObservations(observationsDir string) ([]ClusterMember, error) {
+	return loadAllObservations(observationsDir)
 }
 
 // loadAllObservations walks observationsDir for *.json files, decodes

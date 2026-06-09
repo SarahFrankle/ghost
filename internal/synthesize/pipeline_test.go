@@ -125,7 +125,8 @@ func TestPipelineWritesTopicsSubdir(t *testing.T) {
 		case strings.Contains(user, "id-canon"):
 			return "# Identity\n\nbody.\n", nil
 		case strings.Contains(user, "topic-canon"):
-			return "# Testing\n\nbody.\n", nil
+			// Topic synth returns only the body under the supplied title.
+			return "- body\n", nil
 		}
 		return "", fmt.Errorf("unexpected payload: %q", user)
 	}}
@@ -143,9 +144,9 @@ func TestPipelineWritesTopicsSubdir(t *testing.T) {
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
 	}
-	// Topic filename is derived from the body's H1 ("# Testing"), not from
-	// any upstream slug.
-	for _, want := range []string{"identity.md", "rules.md", "topics/testing.md"} {
+	// Topic filename is derived from the cluster's themed label (Canonical),
+	// not from anything the model returns.
+	for _, want := range []string{"identity.md", "rules.md", "topics/topic-canon.md"} {
 		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
 			t.Fatalf("missing %s: %v", want, err)
 		}
@@ -159,9 +160,9 @@ func TestPipelineRespectsTopicCap(t *testing.T) {
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "alpha-topic"):
-			return "# Alpha\n", nil
+			return "- alpha\n", nil
 		case strings.Contains(user, "beta-topic"):
-			return "# Beta\n", nil
+			return "- beta\n", nil
 		}
 		return "", fmt.Errorf("unexpected payload: %q", user)
 	}}
@@ -178,18 +179,18 @@ func TestPipelineRespectsTopicCap(t *testing.T) {
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "topics", "alpha.md")); err != nil {
-		t.Fatalf("expected topics/alpha.md (highest evidence): %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "topics", "alpha-topic.md")); err != nil {
+		t.Fatalf("expected topics/alpha-topic.md (highest evidence): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "topics", "beta.md")); !os.IsNotExist(err) {
-		t.Fatalf("expected topics/beta.md to be capped out, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(dir, "topics", "beta-topic.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected topics/beta-topic.md to be capped out, got err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "index.md")); err != nil {
 		t.Fatalf("expected index.md: %v", err)
 	}
 }
 
-func TestPipelineSlugCollisionMergesAndSucceeds(t *testing.T) {
+func TestPipelineDistinctTopicsBothSurvive(t *testing.T) {
 	dir := t.TempDir()
 	// Seed a prior topics dir with an unrelated topic.
 	if err := os.MkdirAll(filepath.Join(dir, "topics"), 0o755); err != nil {
@@ -200,22 +201,20 @@ func TestPipelineSlugCollisionMergesAndSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both topic clusters produce the title "Conflict" → same slug → merged
-	// into one cluster and re-synthesized. The merged cluster contains both
-	// "first-canon" and "second-canon" members.
+	// Grouping already consolidated observations into distinct themed labels,
+	// so each topic cluster becomes its own file: one synth call apiece, no
+	// merging. The slug comes from the label, not from anything the model
+	// returns.
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "ident-canon"):
 			return "# Identity\n\nbody.\n", nil
-		case strings.Contains(user, "first-canon") && strings.Contains(user, "second-canon"):
-			// merged re-synthesis call
-			return "# Conflict\n\nmerged.\n", nil
 		case strings.Contains(user, "first-canon"):
-			return "# Conflict\n\nfirst.\n", nil
+			return "- first\n", nil
 		case strings.Contains(user, "second-canon"):
-			return "# Conflict\n\nsecond.\n", nil
+			return "- second\n", nil
 		}
 		return "", fmt.Errorf("unexpected payload: %q", user)
 	}}
@@ -229,11 +228,13 @@ func TestPipelineSlugCollisionMergesAndSucceeds(t *testing.T) {
 	}}
 	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20}
 	if err := p.Run(context.Background(), cf); err != nil {
-		t.Fatalf("expected successful run after merge, got: %v", err)
+		t.Fatalf("expected successful run, got: %v", err)
 	}
-	// Merged topic should exist.
-	if _, err := os.Stat(filepath.Join(dir, "topics", "conflict.md")); err != nil {
-		t.Fatalf("merged topic conflict.md not found: %v", err)
+	// Both distinct topics exist; neither is merged away.
+	for _, want := range []string{"topics/first-canon.md", "topics/second-canon.md"} {
+		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
+			t.Fatalf("expected %s: %v", want, err)
+		}
 	}
 	// Prior unrelated topic is replaced (topics/ wiped on success).
 	if _, err := os.Stat(prior); err == nil {

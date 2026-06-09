@@ -20,9 +20,9 @@ import (
 //  1. Build identity and rules in parallel (they don't depend on topic
 //     slugs).
 //  2. Run topic synthesis: one topic-model call per topic cluster
-//     producing a body that starts with `# <Title>`; slugify each
-//     title; merge any slug collisions and re-synthesize to a
-//     unique-slug fixpoint; fail loudly on any per-cluster error.
+//     producing the body under that cluster's themed label; the slug
+//     is derived from the label and the `# <label>` heading prepended.
+//     Fail loudly on any per-cluster error or a label-slug collision.
 //  3. Rank surviving topics by evidence, cap to MaxTopicEntries.
 //  4. Build index.md from the capped TopicResult list.
 //  5. Atomic write: tmpdir holds every file, then the pipeline wipes
@@ -85,8 +85,8 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 	rules := BuildRules(ctx, p.Client, p.SmartModel, ruleClusters, userRules)
 	results := []FileResult{identity, rules}
 
-	// Topic synthesis. Slug collisions are merged (not failed); any
-	// per-cluster error or malformed body fails the whole rebuild.
+	// Topic synthesis. One call per themed cluster; any per-cluster error,
+	// label-slug collision, or malformed body fails the whole rebuild.
 	topicModel := p.TopicModel
 	if topicModel == "" {
 		topicModel = p.SmartModel

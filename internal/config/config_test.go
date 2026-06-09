@@ -25,8 +25,11 @@ func TestDefaultsClusterCosineThresholds(t *testing.T) {
 	if d.Thresholds.ClusterCosineIdentityRule != 0.85 {
 		t.Fatalf("identity/rule default = %v, want 0.85", d.Thresholds.ClusterCosineIdentityRule)
 	}
-	if d.Thresholds.ClusterCosineTopic != 0.75 {
-		t.Fatalf("topic default = %v, want 0.75", d.Thresholds.ClusterCosineTopic)
+	if d.Thresholds.MinClusterSize != 3 {
+		t.Fatalf("min cluster size default = %v, want 3", d.Thresholds.MinClusterSize)
+	}
+	if d.Models.Label == "" || d.Models.Theme == "" {
+		t.Fatalf("label/theme model defaults must be set: %q / %q", d.Models.Label, d.Models.Theme)
 	}
 }
 

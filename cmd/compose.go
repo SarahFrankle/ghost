@@ -325,17 +325,29 @@ func runCluster(ctx context.Context) error {
 		return fmt.Errorf("scan observations fingerprints: %w", err)
 	}
 	embModelForFP := embeddingModelName(cfg)
-	thresholdFor := func(kind string) float32 {
-		if kind == "topic" {
-			return float32(cfg.Thresholds.ClusterCosineTopic)
-		}
+	// Only identity/rule/voice cosine-cluster now; topics route through the
+	// grouper and never reach thresholdFor.
+	thresholdFor := func(string) float32 {
 		return float32(cfg.Thresholds.ClusterCosineIdentityRule)
+	}
+	labelModel := cfg.Models.Label
+	if labelModel == "" {
+		labelModel = cfg.Models.Cheap
+	}
+	themeModel := cfg.Models.Theme
+	if themeModel == "" {
+		themeModel = cfg.Models.Smart
 	}
 	expectedFP := cluster.ClustersFingerprint(
 		obsFingerprints,
 		embModelForFP,
 		float32(cfg.Thresholds.ClusterCosineIdentityRule),
-		float32(cfg.Thresholds.ClusterCosineTopic),
+		labelModel,
+		prompts.ClusterLabelSystemHash(),
+		themeModel,
+		prompts.ClusterThemeIdentifySystemHash(),
+		prompts.ClusterThemeMapSystemHash(),
+		cfg.Thresholds.MinClusterSize,
 	)
 	if !composeRecluster {
 		if existing, err := cluster.LoadClusters(clustersPath); err == nil && existing.Fingerprint == expectedFP {
@@ -351,6 +363,30 @@ func runCluster(ctx context.Context) error {
 		return err
 	}
 
+	client, err := anthropic.New()
+	if err != nil {
+		return err
+	}
+	labelCache, err := cluster.LoadLabelCache(filepath.Join(stateDir, "labels.json"), labelModel, prompts.ClusterLabelSystemHash())
+	if err != nil {
+		return err
+	}
+	grouper := &cluster.TopicGrouper{
+		Label:                   cluster.NewLabelFunc(client, labelModel),
+		ThemeIdentify:           cluster.NewThemeIdentifyFunc(client, themeModel),
+		ThemeMap:                cluster.NewThemeMapFunc(client, themeModel),
+		Cache:                   labelCache,
+		CacheSavePath:           filepath.Join(stateDir, "labels.json"),
+		ThemesPath:              filepath.Join(stateDir, "themes.json"),
+		ThemeModel:              themeModel,
+		ThemeIdentifyPromptHash: prompts.ClusterThemeIdentifySystemHash(),
+		ThemeMapPromptHash:      prompts.ClusterThemeMapSystemHash(),
+		MinClusterSize:          cfg.Thresholds.MinClusterSize,
+		Workers:                 cfg.Batching.ExtractWorkers,
+		Log:                     log.Printf,
+		Progress:                stderrCounter("cluster: topics: completed"),
+	}
+
 	p := &cluster.Pipeline{
 		Embedder:       emb,
 		EmbeddingModel: embModel,
@@ -360,6 +396,7 @@ func runCluster(ctx context.Context) error {
 		ThresholdFor:   thresholdFor,
 		Workers:        cfg.Batching.ExtractWorkers,
 		Log:            log.Printf,
+		Topics:         grouper,
 		Fingerprint:    expectedFP,
 	}
 	if err := p.Run(ctx, obsDir); err != nil {
@@ -444,7 +481,7 @@ func runSynthesize(ctx context.Context) error {
 		MaxTopicEntries: cfg.Index.MaxTopicEntries,
 		Workers:         cfg.Batching.SynthWorkers,
 		Log:             log.Printf,
-		Progress:        synthProgress(),
+		Progress:        stderrCounter("synthesize: topics"),
 	}
 	if err := p.Run(ctx, cf); err != nil {
 		return err
@@ -465,18 +502,18 @@ func runSynthesize(ctx context.Context) error {
 	return nil
 }
 
-// synthProgress returns an in-place topic-synthesis counter that rewrites a
-// single stderr line (e.g. "synthesize: topics 37/141"). When stderr is not a
-// terminal (piped, redirected, CI) it returns nil so synthesis stays quiet
-// rather than spraying carriage returns into a log file; the per-stage log
-// lines already mark coarse progress there.
-func synthProgress() func(done, total int) {
+// stderrCounter returns an in-place progress counter that rewrites a single
+// stderr line "<label> done/total" (e.g. "synthesize: topics 37/141"). When
+// stderr is not a terminal (piped, redirected, CI) it returns nil so progress
+// stays quiet rather than spraying carriage returns into a log file; the
+// per-stage log lines already mark coarse progress there.
+func stderrCounter(label string) func(done, total int) {
 	fi, err := os.Stderr.Stat()
 	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		return nil
 	}
 	return func(done, total int) {
-		fmt.Fprintf(os.Stderr, "\r\033[Ksynthesize: topics %d/%d", done, total)
+		fmt.Fprintf(os.Stderr, "\r\033[K%s %d/%d", label, done, total)
 		if done == total {
 			fmt.Fprintln(os.Stderr)
 		}

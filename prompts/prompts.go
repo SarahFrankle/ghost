@@ -48,3 +48,25 @@ var synthesizeIndexSystem string
 
 func SynthesizeIndexSystem() string     { return synthesizeIndexSystem }
 func SynthesizeIndexSystemHash() string { return hashOf(synthesizeIndexSystem) }
+
+//go:embed cluster.label.system.md
+var clusterLabelSystem string
+
+func ClusterLabelSystem() string     { return clusterLabelSystem }
+func ClusterLabelSystemHash() string { return hashOf(clusterLabelSystem) }
+
+//go:embed cluster.theme.identify.system.md
+var clusterThemeIdentifySystem string
+
+// ClusterThemeIdentifySystem returns the prompt for theme pass 1: distilling
+// the full label vocabulary into 15–25 canonical theme names.
+func ClusterThemeIdentifySystem() string     { return clusterThemeIdentifySystem }
+func ClusterThemeIdentifySystemHash() string { return hashOf(clusterThemeIdentifySystem) }
+
+//go:embed cluster.theme.map.system.md
+var clusterThemeMapSystem string
+
+// ClusterThemeMapSystem returns the prompt for theme pass 2: mapping a batch of
+// labels onto the fixed theme set produced by pass 1.
+func ClusterThemeMapSystem() string     { return clusterThemeMapSystem }
+func ClusterThemeMapSystemHash() string { return hashOf(clusterThemeMapSystem) }

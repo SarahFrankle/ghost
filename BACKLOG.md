@@ -49,15 +49,23 @@ topic cluster — synthesis renders whatever it sees, so both can become bullets
    undated. The bump forces a one-time full re-extract (cheap model,
    content-identical observations, now dated) → clusters rebuild → topics
    regenerate. "Rebuild paid once per chunk," as in chunk 3.
-4. **No faceting, no Slug change.** `mergeClusters` needs no change — it already
-   concatenates members wholesale, so `SourceTime` rides into a merged cluster's
-   re-synthesis for free. This realizes "a collision-merge is where
-   contradictions surface and recency decides" at zero extra cost.
+4. **No faceting, no Slug change.** Topic grouping concatenates all same-theme
+   observations into one cluster, so `SourceTime` rides into the topic's
+   synthesis payload for free — no clustering change needed.
+
+> **Updated 2026-06-09:** decision 4 originally leaned on the collision→merge
+> fixpoint as the point where contradictions surface and recency decides. That
+> mechanism was **retired** in the topic-clustering redesign (label→theme→group;
+> `mergeClusters` and the fixpoint are gone). The design still holds: the themed
+> topic cluster is now where same-topic observations — and any contradictions —
+> converge. `renderTopicPayload` is still the place to add dated rendering, but
+> it now emits a `TITLE:`/`CLUSTER:` payload (the title is the themed label, not
+> a model-invented H1).
 
 Files (when built): `internal/extract/{schema,extract}.go`,
 `internal/cluster/{types,pipeline}.go`, `internal/synthesize/topics.go`
 (`renderTopicPayload` dated formatter), `prompts/synthesize.topics.system.md`.
-Untouched: `slugify.go`, the fixpoint loop, `config.go`, identity / rules.
+Untouched: `slugify.go`, `config.go`, identity / rules.
 
 ## Voice — synthesized writing samples — DEFERRED (2026-06-04)
 
@@ -103,9 +111,39 @@ collision→merge (faceting deliberately *prevents* the very merges that feature
 exists to perform). Reconsider only if a concrete, recurring role-split topic
 appears that flat-topic output handles badly.
 
+## Refactor to simplify
+Do a full review of the whole repo / app. Look for places where we can use abstraction or shared classes.
+
+Example: 
+- when a compose stage is running, show clean in-place counter of progress logs (this should be standardised across all stages)
+- abstract out / use shared logic for how this is implemented
+- ensure logs all have the same format (with datetimestamps, for example)
+
+> **Partly done 2026-06-09:** the in-place counter is now shared via
+> `cmd.stderrCounter(label)` (TTY-only, quiet when piped), used by both the
+> synthesize-topics and cluster-labeling stages. Still outstanding: the
+> bounded-parallel fan-out is hand-rolled in three places
+> (`synthesize.synthAll`, `cluster.labelAll`, `cluster.mapBatches`) and has
+> begun to drift — extract one shared helper. Tracked in the chunk-2 review
+> follow-ups in the topic-clustering design spec.
+
+This repo so far should be considered a POC. DO NOT assume that because a pattern has been started that it is best practice. Claude works so quickly, if we're sure it's a better pattern, it's better to refactor. Ask a critic first if it's a good case for refactoring.
+
 ## Done / absorbed elsewhere
 
 - **Collision → merge** (was the third "judgment in condensing" item): shipped
-  in chunk 3 completion (`docs/superpowers/specs/2026-06-03-chunk-3-collision-merge-design.md`).
-  A slug collision now merges the colliding clusters and re-synthesizes to a
-  unique-slug fixpoint instead of failing the rebuild.
+  in chunk 3 completion (`docs/superpowers/specs/2026-06-03-chunk-3-collision-merge-design.md`),
+  then **retired 2026-06-09** by the topic-clustering redesign. Topics no longer
+  cluster by cosine and no longer self-name via a model H1, so slug collisions
+  can't arise from independent synthesis: grouping happens upstream by themed
+  label, and two distinct labels that slugify the same now fail loud (a
+  theme-prompt bug) rather than merging. `mergeClusters` + the fixpoint were
+  deleted.
+
+- **Topic clustering redesign — label→theme→group** (replaces cosine-for-topics):
+  shipped 2026-06-09 across three commits on `topic-clustering-redesign`
+  (`docs/superpowers/specs/2026-06-08-topic-clustering-redesign-design.md`).
+  Topic observations skip embeddings; a cheap model labels each, a smart model
+  consolidates labels into themes (two-pass identify→map), and observations
+  group by exact theme. The theme names the topic (deterministic slug, no
+  collision class). On the real corpus: 199 topic obs → 17 themes, 0 dropped.

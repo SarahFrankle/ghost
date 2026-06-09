@@ -12,9 +12,9 @@ import (
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
-// TopicResult is one synthesized topic: the cluster it came from, the
-// slug derived from the body's H1, the body itself, and the total
-// evidence count. Used by BuildIndex to rank and link topics.
+// TopicResult is one synthesized topic: the cluster it came from, the slug
+// derived from the cluster's themed label, the label as title, the body, and
+// the total evidence count. Used by BuildIndex to rank and link topics.
 type TopicResult struct {
 	Cluster       cluster.Cluster
 	Slug          string
@@ -23,160 +23,141 @@ type TopicResult struct {
 	EvidenceTotal int
 }
 
-// synthFunc synthesizes one cluster into a title (the parsed H1) and a
-// full markdown body. Injected so the merge loop is testable without a
-// live model.
-type synthFunc func(ctx context.Context, c cluster.Cluster) (title, body string, err error)
+// synthFunc synthesizes one cluster into the markdown body that goes *under*
+// the topic's title. The title is the cluster's themed label (c.Canonical),
+// supplied to the model and prepended as the `# <label>` heading by
+// buildTopics — the model never invents it. Injected so buildTopics is
+// testable without a live model.
+type synthFunc func(ctx context.Context, c cluster.Cluster) (body string, err error)
 
-// BuildTopics synthesizes the kind=topic clusters into one file per
-// surviving topic. It adapts the smart-model client into a synthFunc and
-// delegates to buildTopics. The public result shape is unchanged.
+// BuildTopics synthesizes the kind=topic clusters into one file per topic. It
+// adapts the smart-model client into a synthFunc and delegates to buildTopics.
+// The public result shape is unchanged.
 func BuildTopics(ctx context.Context, client anthropic.Client, model string, clusters []cluster.Cluster, workers int, logf func(string, ...any), progress func(done, total int)) ([]TopicResult, []FileResult, error) {
-	synth := func(ctx context.Context, c cluster.Cluster) (string, string, error) {
+	synth := func(ctx context.Context, c cluster.Cluster) (string, error) {
 		raw, err := client.Complete(ctx, model, prompts.SynthesizeTopicsSystem(), renderTopicPayload(c))
 		if err != nil {
-			return "", "", err
+			return "", err
 		}
-		body := ensureTrailingNewline(strings.TrimSpace(raw))
-		title, err := ParseH1(body)
-		if err != nil {
-			return "", "", err
-		}
-		return title, body, nil
+		return strings.TrimSpace(raw), nil
 	}
 	return buildTopics(ctx, synth, clusters, workers, logf, progress)
 }
 
-// topicWork is one cluster moving through the merge loop, carrying its
-// cached synthesis result. synthed=false means it needs (re-)synthesis.
-type topicWork struct {
-	cluster cluster.Cluster
-	title   string
-	body    string
-	synthed bool
-}
-
-// buildTopics runs topic synthesis to a unique-slug fixpoint.
+// buildTopics synthesizes each kind=topic cluster into exactly one topic file.
 //
-// Each round: synthesize every not-yet-synthesized cluster in parallel,
-// slugify the titles, and group clusters by slug. Any group larger than
-// one is a collision — the strongest possible signal that those clusters
-// are the same topic (a smart model independently named them the same).
-// Those clusters are merged into one via mergeClusters and re-synthesized
-// next round. Clusters with a unique slug keep their cached body.
+// The grouping stage has already consolidated observations into themed
+// clusters, so there is no merging here: one synth call per cluster, the slug
+// derived deterministically from the themed label (c.Canonical), and the file
+// titled with that same label. The model writes only the body that goes under
+// the title; buildTopics prepends the `# <label>` heading so the file title,
+// slug, and index entry share one source of truth and can never drift.
 //
-// Every collision round merges >=2 clusters into 1, so the working-set
-// count strictly decreases and the loop terminates in <=N rounds. A
-// collision-free corpus costs exactly one synthesis pass.
-//
-// Any synthesis error, malformed body (no leading H1), or slugifier
-// reject fails the whole topics rebuild: index.md references the slug
-// set, so partial success is not a useful state.
+// Any failure fails the whole topics rebuild — index.md references the slug
+// set and topics are lazy-loaded as authoritative reference, so a partial set
+// silently misleads downstream consumers. Loudly wrong beats silently wrong:
+//   - a label that does not slugify,
+//   - two distinct labels whose slugs collide (a theme-prompt bug — distinct
+//     themes must yield distinct files, never a silent merge),
+//   - any synth error,
+//   - an empty body, or a body that opens with its own H1 (the model invented
+//     a title instead of writing under the supplied one).
 func buildTopics(ctx context.Context, synth synthFunc, clusters []cluster.Cluster, workers int, logf func(string, ...any), progress func(done, total int)) ([]TopicResult, []FileResult, error) {
-	work := make([]*topicWork, 0, len(clusters))
+	var topics []cluster.Cluster
 	for _, c := range clusters {
 		if c.Kind == "topic" {
-			work = append(work, &topicWork{cluster: c})
+			topics = append(topics, c)
 		}
 	}
-	if len(work) == 0 {
+	if len(topics) == 0 {
 		return nil, nil, nil
 	}
 
 	if logf != nil {
-		logf("synthesize: topics: %d cluster(s) to synthesize", len(work))
+		logf("synthesize: topics: %d cluster(s) to synthesize", len(topics))
 	}
 
-	for {
-		if err := synthRound(ctx, synth, work, workers, progress); err != nil {
-			return nil, nil, err
+	// Slug every label up front and reject collisions before spending any
+	// model calls: an unslugifiable label or a duplicate slug is a theme-prompt
+	// bug, not a per-cluster failure, so catch it for free.
+	slugOf := make([]string, len(topics))
+	labelForSlug := map[string]string{}
+	for i, c := range topics {
+		slug, err := Slug(c.Canonical)
+		if err != nil {
+			return nil, nil, fmt.Errorf("topics: slugify label %q: %w", c.Canonical, err)
 		}
-
-		slugOf := make([]string, len(work))
-		bySlug := map[string][]int{}
-		for i, w := range work {
-			slug, err := Slug(w.title)
-			if err != nil {
-				return nil, nil, fmt.Errorf("topics: slugify cluster %q (title %q): %w", w.cluster.Canonical, w.title, err)
-			}
-			slugOf[i] = slug
-			bySlug[slug] = append(bySlug[slug], i)
+		if prev, ok := labelForSlug[slug]; ok {
+			return nil, nil, fmt.Errorf("topics: distinct labels %q and %q both slugify to %q", prev, c.Canonical, slug)
 		}
-
-		collided := false
-		for _, idxs := range bySlug {
-			if len(idxs) > 1 {
-				collided = true
-				break
-			}
-		}
-		if !collided {
-			trs, files := emitTopics(work, slugOf)
-			return trs, files, nil
-		}
-
-		slugs := make([]string, 0, len(bySlug))
-		for s := range bySlug {
-			slugs = append(slugs, s)
-		}
-		sort.Strings(slugs)
-
-		next := make([]*topicWork, 0, len(work))
-		for _, slug := range slugs {
-			idxs := bySlug[slug]
-			if len(idxs) == 1 {
-				next = append(next, work[idxs[0]])
-				continue
-			}
-			cs := make([]cluster.Cluster, 0, len(idxs))
-			for _, i := range idxs {
-				cs = append(cs, work[i].cluster)
-			}
-			next = append(next, &topicWork{cluster: mergeClusters(cs)})
-			if logf != nil {
-				logf("topics: merged %d clusters -> %q", len(idxs), slug)
-			}
-		}
-		work = next
+		labelForSlug[slug] = c.Canonical
+		slugOf[i] = slug
 	}
+
+	bodies, err := synthAll(ctx, synth, topics, workers, progress)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	type row struct {
+		slug    string
+		cluster cluster.Cluster
+		content string
+	}
+	rows := make([]row, len(topics))
+	for i, c := range topics {
+		body := strings.TrimSpace(bodies[i])
+		if body == "" {
+			return nil, nil, fmt.Errorf("topics: empty body for label %q", c.Canonical)
+		}
+		// The label is the title; a body with its own H1 means the model
+		// invented one and would double-head the file.
+		if _, err := ParseH1(body); err == nil {
+			return nil, nil, fmt.Errorf("topics: body for label %q opens with its own H1; the title is supplied by the label", c.Canonical)
+		}
+		content := ensureTrailingNewline(fmt.Sprintf("# %s\n\n%s", c.Canonical, body))
+		rows[i] = row{slug: slugOf[i], cluster: c, content: content}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].slug < rows[j].slug })
+
+	trs := make([]TopicResult, 0, len(rows))
+	files := make([]FileResult, 0, len(rows))
+	for _, r := range rows {
+		trs = append(trs, TopicResult{
+			Cluster:       r.cluster,
+			Slug:          r.slug,
+			Title:         r.cluster.Canonical,
+			Body:          r.content,
+			EvidenceTotal: r.cluster.EvidenceCount,
+		})
+		files = append(files, FileResult{
+			Name:    fmt.Sprintf("topics/%s.md", r.slug),
+			Content: r.content,
+		})
+	}
+	return trs, files, nil
 }
 
-// synthRound synthesizes every cluster in work that has no cached body,
-// in parallel. Any error fails the round.
-func synthRound(ctx context.Context, synth synthFunc, work []*topicWork, workers int, progress func(done, total int)) error {
-	type res struct {
-		idx   int
-		title string
-		body  string
-		err   error
-	}
-	var todo []int
-	for i, w := range work {
-		if !w.synthed {
-			todo = append(todo, i)
-		}
-	}
-	if len(todo) == 0 {
-		return nil
-	}
-
+// synthAll synthesizes every cluster's body in parallel, bounded by workers.
+// Any single failure fails the whole batch.
+func synthAll(ctx context.Context, synth synthFunc, topics []cluster.Cluster, workers int, progress func(done, total int)) ([]string, error) {
 	// Bound the fan-out: each synth is a `claude` subprocess, and launching
 	// every cluster at once starves the parent-side stdin writers, tripping
 	// claude's no-stdin timeout. A semaphore caps in-flight subprocesses,
 	// matching the extract stage.
 	workers = max(workers, 1)
 	sem := make(chan struct{}, workers)
-	out := make([]res, len(todo))
-	total := len(todo)
+	bodies := make([]string, len(topics))
+	errs := make([]error, len(topics))
+	total := len(topics)
 	var progressMu sync.Mutex
 	var done int
 	var wg sync.WaitGroup
-	for j, idx := range todo {
+	for i := range topics {
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			title, body, err := synth(ctx, work[idx].cluster)
-			out[j] = res{idx: idx, title: title, body: body, err: err}
+			bodies[i], errs[i] = synth(ctx, topics[i])
 			// One in-place counter update per completion; the caller decides
 			// how to render it (rewriting line on a TTY, nothing otherwise).
 			if progress != nil {
@@ -191,103 +172,17 @@ func synthRound(ctx context.Context, synth synthFunc, work []*topicWork, workers
 	wg.Wait()
 
 	var failed []string
-	for _, r := range out {
-		if r.err != nil {
-			failed = append(failed, fmt.Sprintf("cluster %q: %v", work[r.idx].cluster.Canonical, r.err))
-			continue
+	for i, err := range errs {
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("cluster %q: %v", topics[i].Canonical, err))
 		}
-		work[r.idx].title = r.title
-		work[r.idx].body = r.body
-		work[r.idx].synthed = true
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("topics: %d cluster(s) failed: %s", len(failed), strings.Join(failed, "; "))
+		return nil, fmt.Errorf("topics: %d cluster(s) failed: %s", len(failed), strings.Join(failed, "; "))
 	}
-	return nil
-}
-
-// emitTopics builds the slug-sorted result and file lists from a fully
-// synthesized, collision-free working set. slugOf[i] is the slug for
-// work[i], already computed and validated by buildTopics.
-func emitTopics(work []*topicWork, slugOf []string) ([]TopicResult, []FileResult) {
-	type row struct {
-		slug string
-		w    *topicWork
-	}
-	rows := make([]row, len(work))
-	for i, w := range work {
-		rows[i] = row{slug: slugOf[i], w: w}
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].slug < rows[j].slug })
-
-	trs := make([]TopicResult, 0, len(rows))
-	files := make([]FileResult, 0, len(rows))
-	for _, r := range rows {
-		trs = append(trs, TopicResult{
-			Cluster:       r.w.cluster,
-			Slug:          r.slug,
-			Title:         r.w.title,
-			Body:          r.w.body,
-			EvidenceTotal: r.w.cluster.EvidenceCount,
-		})
-		files = append(files, FileResult{
-			Name:    fmt.Sprintf("topics/%s.md", r.slug),
-			Content: r.w.body,
-		})
-	}
-	return trs, files
-}
-
-// mergeClusters combines colliding topic clusters into one synthetic
-// cluster, mirroring how cluster.Bucket forms a cluster. Pure and
-// deterministic: members are concatenated and sorted by ObservationHash
-// (ties by Text) so the same input always yields the same re-synthesis
-// payload. EvidenceCount is the total member count; ProjectCount is the
-// size of the project union. Canonical is taken from the highest-evidence
-// input cluster (ties broken by the lexicographically smallest Canonical)
-// so the dominant cluster names the merged topic.
-//
-// Precondition: cs is non-empty — callers pass a collision group of >=2.
-// An empty slice panics by design (a caller bug). The result is always
-// Kind "topic" with an empty SubKey, since topic clusters carry no SubKey.
-func mergeClusters(cs []cluster.Cluster) cluster.Cluster {
-	var members []cluster.ClusterMember
-	projects := map[string]struct{}{}
-	for _, c := range cs {
-		members = append(members, c.Members...)
-		for _, m := range c.Members {
-			if m.Project != "" {
-				projects[m.Project] = struct{}{}
-			}
-		}
-	}
-	sort.Slice(members, func(i, j int) bool {
-		if members[i].ObservationHash != members[j].ObservationHash {
-			return members[i].ObservationHash < members[j].ObservationHash
-		}
-		return members[i].Text < members[j].Text
-	})
-
-	best := cs[0]
-	for _, c := range cs[1:] {
-		if c.EvidenceCount > best.EvidenceCount ||
-			(c.EvidenceCount == best.EvidenceCount && c.Canonical < best.Canonical) {
-			best = c
-		}
-	}
-
-	return cluster.Cluster{
-		Kind:          "topic",
-		Canonical:     best.Canonical,
-		Members:       members,
-		EvidenceCount: len(members),
-		ProjectCount:  len(projects),
-	}
+	return bodies, nil
 }
 
 func renderTopicPayload(c cluster.Cluster) string {
-	var b strings.Builder
-	b.WriteString("CLUSTER:\n")
-	b.WriteString(renderClusters([]cluster.Cluster{c}))
-	return b.String()
+	return fmt.Sprintf("TITLE: %s\n\nCLUSTER:\n%s", c.Canonical, renderClusters([]cluster.Cluster{c}))
 }

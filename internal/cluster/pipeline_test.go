@@ -33,6 +33,87 @@ func loadCacheForTest(t *testing.T, stateDir, model string) (*embedding.Cache, s
 	return c, path
 }
 
+func TestPipelineRoutesTopicsThroughGrouper(t *testing.T) {
+	stateDir := t.TempDir()
+	obsDir := filepath.Join(stateDir, "observations")
+	if err := os.MkdirAll(obsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Three topic observations (one theme) plus one identity observation: the
+	// topics route through the grouper, the identity still buckets by cosine.
+	body := `{
+		"source": "/p/proj-a.jsonl", "project": "proj-a", "content_hash": "sha256:a",
+		"extracted_at": "2026-05-21T00:00:00Z",
+		"observations": [
+			{"kind":"topic","text":"a","evidence":"e"},
+			{"kind":"topic","text":"b","evidence":"e"},
+			{"kind":"topic","text":"c","evidence":"e"},
+			{"kind":"identity","text":"works at Miro","evidence":"e"}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(obsDir, "a.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cache, _ := loadCacheForTest(t, stateDir, "test-emb")
+	g := &TopicGrouper{
+		Label:         func(context.Context, string) (string, error) { return "x", nil },
+		ThemeIdentify: func(context.Context, []string) ([]string, error) { return []string{"Theme X"}, nil },
+		ThemeMap: func(_ context.Context, _ []string, labels []string) (map[string]string, error) {
+			m := map[string]string{}
+			for _, l := range labels {
+				m[l] = "Theme X"
+			}
+			return m, nil
+		},
+		Cache:                   mustLabelCache(t, stateDir),
+		ThemesPath:              filepath.Join(stateDir, "themes.json"),
+		ThemeModel:              "sonnet",
+		ThemeIdentifyPromptHash: "ih",
+		ThemeMapPromptHash:      "mh",
+		MinClusterSize:          3,
+		Workers:                 2,
+	}
+	p := &Pipeline{
+		Embedder:       fakeEmbedder{},
+		EmbeddingModel: "test-emb",
+		Cache:          cache,
+		CacheSavePath:  filepath.Join(stateDir, "embeddings.json"),
+		ClustersPath:   filepath.Join(stateDir, "clusters.json"),
+		ThresholdFor:   func(string) float32 { return 0.85 },
+		Workers:        2,
+		Topics:         g,
+	}
+	if err := p.Run(context.Background(), obsDir); err != nil {
+		t.Fatal(err)
+	}
+	cf, err := LoadClusters(p.ClustersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var topicCount, identityCount int
+	for _, c := range cf.Clusters {
+		switch c.Kind {
+		case "topic":
+			topicCount++
+			if c.Canonical != "Theme X" {
+				t.Fatalf("topic canonical = %q, want Theme X", c.Canonical)
+			}
+			if c.EvidenceCount != 3 {
+				t.Fatalf("topic evidence = %d, want 3", c.EvidenceCount)
+			}
+		case "identity":
+			identityCount++
+		}
+	}
+	if topicCount != 1 {
+		t.Fatalf("topic clusters = %d, want 1", topicCount)
+	}
+	if identityCount != 1 {
+		t.Fatalf("identity clusters = %d, want 1 (rest still cosine-bucketed)", identityCount)
+	}
+}
+
 func TestPipelineProducesClustersJSON(t *testing.T) {
 	stateDir := t.TempDir()
 	obsDir := filepath.Join(stateDir, "observations")

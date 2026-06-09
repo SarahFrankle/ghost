@@ -3,23 +3,24 @@ Code will lazy-load when the user works on tasks matching that
 topic. The file is reference material the user has already
 implicitly agreed with through repeated feedback across sessions.
 
-Your input is a single cluster of observations about one topic. Each
-cluster member has a canonical phrasing, supporting member
-observations, and evidence.
+Your input is a `TITLE:` line naming the topic, followed by a
+`CLUSTER:` of observations about that topic. Each cluster member
+has a canonical phrasing, supporting member observations, and
+evidence.
+
+The title is already chosen for you. Do not restate, rename, or
+second-guess it.
 
 Hard rules:
-- The first non-empty line of your output MUST be `# <Title>`. The
-  title is a clean noun phrase naming the concept this cluster is
-  about — title case, no quoting, no abbreviations, no trailing
-  punctuation, at most 6 words and 40 characters. Examples: `# Error Handling`,
-  `# Pull Requests`, `# Documentation`. The caller derives the
-  filename from this title; an unparseable or unreasonable title
-  fails the whole topic file.
-- After the heading, write the body as markdown only.
+- Write ONLY the body that goes under the title. Do NOT emit a
+  title, an H1 (`# ...`), or any heading on the first line — the
+  caller supplies the `# <Title>` heading. Your first line is the
+  first line of body content.
+- The body is markdown only.
 - One bullet per durable preference. Imperative voice. No hedging.
-- Group related bullets under level-2 subheadings only if there are
-  at least three bullets that share a subtheme. Otherwise keep it
-  flat.
+- Group related bullets under level-2 subheadings (`## ...`) only
+  if there are at least three bullets that share a subtheme.
+  Otherwise keep it flat.
 - Do not invent guidance absent from the cluster. Do not paraphrase
   away the user's specificity.
 - No em-dashes. No throat-clearing. Delete sentences you wouldn't

@@ -43,15 +43,21 @@ func ObservationsFingerprints(obsDir string) ([]string, error) {
 	return out, nil
 }
 
-// ClustersFingerprint composes the cache key for clusters.json. Clustering
-// is now embedding-only (no LLM stage 2b), so the inputs are the embedding
-// model and the two per-kind cosine thresholds. The "cluster/v3" namespace
-// ensures clusters produced by the pre-best-match algorithm definitionally miss and are recomputed.
-func ClustersFingerprint(obsFingerprints []string, embeddingModel string, identityRuleThreshold, topicThreshold float32) string {
-	parts := make([]string, 0, len(obsFingerprints)+4)
-	parts = append(parts, "cluster/v3", embeddingModel,
+// ClustersFingerprint composes the cache key for clusters.json. Identity/rule/
+// voice still cluster by cosine (identityRuleThreshold); topics now go through
+// label→theme→group, so the topic-path inputs join the key: label model + label
+// prompt hash, theme model + the two theme-pass prompt hashes (identify + map),
+// and minClusterSize. The "cluster/v4" namespace ensures pre-redesign clusters
+// (cosine-for-topics) definitionally miss and are recomputed.
+func ClustersFingerprint(obsFingerprints []string, embeddingModel string, identityRuleThreshold float32, labelModel, labelPromptHash, themeModel, themeIdentifyPromptHash, themeMapPromptHash string, minClusterSize int) string {
+	parts := make([]string, 0, len(obsFingerprints)+9)
+	parts = append(parts, "cluster/v4", embeddingModel,
 		fmt.Sprintf("identity_rule=%g", identityRuleThreshold),
-		fmt.Sprintf("topic=%g", topicThreshold))
+		"label_model="+labelModel, "label_prompt="+labelPromptHash,
+		"theme_model="+themeModel,
+		"theme_identify_prompt="+themeIdentifyPromptHash,
+		"theme_map_prompt="+themeMapPromptHash,
+		fmt.Sprintf("min_cluster=%d", minClusterSize))
 	parts = append(parts, obsFingerprints...)
 	return fingerprint.Compute(parts...)
 }

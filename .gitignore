@@ -4,10 +4,8 @@
 # Local Claude Code settings (per-machine; not shared)
 .claude/
 
-# Superpowers working docs (specs + plans) are local-only scratch, not
-# shared project deliverables. Handoffs stay tracked.
-docs/superpowers/specs/
-docs/superpowers/plans/
+# Superpowers working docs are local-only scratch, not shared project deliverables. Handoffs stay tracked.
+docs/superpowers/
 
 # Editor/OS junk
 .DS_Store

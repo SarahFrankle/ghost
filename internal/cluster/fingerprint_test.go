@@ -12,12 +12,17 @@ import (
 )
 
 func TestClustersFingerprintDistinguishesInputs(t *testing.T) {
-	base := ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, 0.75)
+	base := ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3)
 	cases := map[string]string{
-		"obs added":               ClustersFingerprint([]string{"a", "b", "c"}, "voyage-3-lite", 0.85, 0.75),
-		"embedding model":         ClustersFingerprint([]string{"a", "b"}, "nomic-embed-text", 0.85, 0.75),
-		"identity/rule threshold": ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.86, 0.75),
-		"topic threshold":         ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, 0.76),
+		"obs added":               ClustersFingerprint([]string{"a", "b", "c"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3),
+		"embedding model":         ClustersFingerprint([]string{"a", "b"}, "nomic-embed-text", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3),
+		"identity/rule threshold": ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.86, "haiku", "lp", "sonnet", "tip", "tmp", 3),
+		"label model":             ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku2", "lp", "sonnet", "tip", "tmp", 3),
+		"label prompt":            ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp2", "sonnet", "tip", "tmp", 3),
+		"theme model":             ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "opus", "tip", "tmp", 3),
+		"theme identify prompt":   ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip2", "tmp", 3),
+		"theme map prompt":        ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp2", 3),
+		"min cluster size":        ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 4),
 	}
 	for name, fp := range cases {
 		if fp == base {
@@ -54,16 +59,19 @@ func TestObservationsFingerprintsSortsAndReadsFile(t *testing.T) {
 	}
 }
 
-func TestClustersFingerprintUsesV3Namespace(t *testing.T) {
-	got := ClustersFingerprint([]string{"a"}, "m", 0.85, 0.75)
+func TestClustersFingerprintUsesV4Namespace(t *testing.T) {
+	got := ClustersFingerprint([]string{"a"}, "m", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3)
 	want := fingerprint.Compute(
-		"cluster/v3", "m",
+		"cluster/v4", "m",
 		fmt.Sprintf("identity_rule=%g", float32(0.85)),
-		fmt.Sprintf("topic=%g", float32(0.75)),
+		"label_model=haiku", "label_prompt=lp",
+		"theme_model=sonnet",
+		"theme_identify_prompt=tip", "theme_map_prompt=tmp",
+		fmt.Sprintf("min_cluster=%d", 3),
 		"a",
 	)
 	if got != want {
-		t.Fatalf("ClustersFingerprint must use the cluster/v3 namespace:\n got=%s\nwant=%s", got, want)
+		t.Fatalf("ClustersFingerprint must use the cluster/v4 namespace:\n got=%s\nwant=%s", got, want)
 	}
 }
 

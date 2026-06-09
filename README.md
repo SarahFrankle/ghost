@@ -206,12 +206,14 @@ Three-stage pipeline:
 
 1. **extract** — per transcript, cheap model. Pulls atomic
    observations with evidence citations.
-2. **cluster** — corpus-level. Embeds observations and groups them by
-   cosine similarity, dedups near-duplicates, and merges evidence.
-   Identity/rule observations use a tight similarity threshold
-   (near-duplicate merging only); topics use a looser one so related
-   preferences ("docs should lead with examples" / "example-first
-   documentation") land in one cluster.
+2. **cluster** — corpus-level, split by kind. Identity, rule, and
+   voice observations are embedded and grouped by cosine similarity
+   (a tight threshold, near-duplicate merging only). Topic
+   observations skip embeddings entirely: a cheap model labels each
+   one, a smart model consolidates the labels into a small set of
+   themes, and observations are grouped by exact theme. The theme
+   names the topic, so related preferences ("docs should lead with
+   examples" / "example-first documentation") land in one topic.
 3. **synthesize** — corpus-level, smart model. Writes
    `identity.md`, `rules.md`, `index.md`, and `topics/*.md` from the
    clusters. Rules are filtered to those appearing in at least 2
@@ -242,6 +244,10 @@ Edit `~/.ghost/config.toml`. Frequently tuned knobs:
 
 - `models.cheap` / `models.smart` — model IDs for the extract vs
   synthesize stages.
+- `models.label` — cheap, high-volume model for per-observation
+  topic labeling (results are cached in `labels.json`).
+- `models.theme` — smart model that consolidates the label
+  vocabulary into themes.
 - `models.embedding` — Voyage embedding model, used only when
   `VOYAGE_API_KEY` is set (otherwise Ollama is used).
 - `thresholds.rule_min_evidence_count` — how many times a rule must
@@ -249,9 +255,10 @@ Edit `~/.ghost/config.toml`. Frequently tuned knobs:
 - `thresholds.rule_min_project_count` — how many different projects.
   Default 2.
 - `thresholds.cluster_cosine_identity_rule` — similarity threshold
-  for bucketing identity/rule observations. Default 0.85 (tight).
-- `thresholds.cluster_cosine_topic` — similarity threshold for
-  bucketing topic observations. Default 0.75 (looser).
+  for bucketing identity/rule/voice observations. Default 0.85 (tight).
+- `thresholds.min_cluster_size` — how many observations a theme must
+  have to become a topic; below this they are dropped as noise
+  (logged). Default 3.
 - `index.max_topic_entries` — cap on topics listed in `index.md`.
   Default 20.
 - `batching.extract_workers` — concurrent extract calls. Default 5.

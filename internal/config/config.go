@@ -15,7 +15,13 @@ type Models struct {
 	// stage (one call per topic cluster). It defaults to a mid-tier model
 	// since topic bodies are summaries of already-extracted observations;
 	// identity/rules/index keep using Smart. Empty falls back to Smart.
-	Topic     string `toml:"topic"`
+	Topic string `toml:"topic"`
+	// Label is the model for the per-observation topic label step (cheap,
+	// high-volume, cached). Empty falls back to Cheap.
+	Label string `toml:"label"`
+	// Theme is the model for the one-shot label-vocabulary consolidation.
+	// Empty falls back to Smart.
+	Theme     string `toml:"theme"`
 	Embedding string `toml:"embedding"`
 }
 
@@ -26,11 +32,10 @@ type Thresholds struct {
 	// identity and rule observations. Tight by default: these kinds want
 	// near-duplicate merging only.
 	ClusterCosineIdentityRule float64 `toml:"cluster_cosine_identity_rule"`
-	// ClusterCosineTopic is the cosine threshold for bucketing topic
-	// observations. Looser than identity/rule so semantically related
-	// preferences ("docs should lead with examples" / "example-first
-	// documentation") land in one topic cluster.
-	ClusterCosineTopic float64 `toml:"cluster_cosine_topic"`
+	// MinClusterSize is the minimum number of observations a themed label
+	// must have to become a topic. Below this, observations are dropped as
+	// noise (logged, not silently).
+	MinClusterSize int `toml:"min_cluster_size"`
 }
 
 type Paths struct {
@@ -65,13 +70,15 @@ func Defaults() Config {
 			Cheap:     "claude-haiku-4-5-20251001",
 			Smart:     "claude-opus-4-8",
 			Topic:     "claude-sonnet-4-6",
+			Label:     "claude-haiku-4-5-20251001",
+			Theme:     "claude-sonnet-4-6",
 			Embedding: "voyage-3-lite",
 		},
 		Thresholds: Thresholds{
 			RuleMinEvidenceCount:      2,
 			RuleMinProjectCount:       2,
 			ClusterCosineIdentityRule: 0.85,
-			ClusterCosineTopic:        0.75,
+			MinClusterSize:            3,
 		},
 		Paths: Paths{
 			TranscriptsGlob: "~/.claude/projects/**/*.jsonl",
