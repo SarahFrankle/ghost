@@ -7,15 +7,31 @@ import (
 	"strings"
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
+	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
-// RankByEvidence returns a copy of topics sorted by EvidenceTotal
-// descending, with ties broken alphabetically by slug for determinism.
+func hasHighConfidenceMember(c cluster.Cluster) bool {
+	for _, m := range c.Members {
+		if m.Confidence == "high" {
+			return true
+		}
+	}
+	return false
+}
+
+// RankByEvidence returns a copy of topics sorted with high-confidence themes
+// first, then by EvidenceTotal descending, with ties broken alphabetically by
+// slug for determinism. High-confidence themes rank first so a directly
+// asserted (stated-once) theme is never truncated out by Cap below.
 func RankByEvidence(topics []TopicResult) []TopicResult {
 	out := make([]TopicResult, len(topics))
 	copy(out, topics)
 	sort.SliceStable(out, func(i, j int) bool {
+		hi, hj := hasHighConfidenceMember(out[i].Cluster), hasHighConfidenceMember(out[j].Cluster)
+		if hi != hj {
+			return hi
+		}
 		if out[i].EvidenceTotal != out[j].EvidenceTotal {
 			return out[i].EvidenceTotal > out[j].EvidenceTotal
 		}
@@ -24,9 +40,32 @@ func RankByEvidence(topics []TopicResult) []TopicResult {
 	return out
 }
 
-// Cap returns at most max entries from topics.
-func Cap(topics []TopicResult, max int) []TopicResult {
-	if max <= 0 || len(topics) <= max {
+// Cap truncates only the soft (non-high-confidence) tail. High-confidence
+// themes are pinned and exempt from the cap: they were protected by the
+// confidence gate and must not be silently dropped by evidence truncation.
+func Cap(topics []TopicResult, max int, logf func(string, ...any)) []TopicResult {
+	if max <= 0 {
+		return topics
+	}
+	high := 0
+	for _, t := range topics {
+		if hasHighConfidenceMember(t.Cluster) {
+			high++
+		}
+	}
+	if high >= max {
+		if high > max && logf != nil {
+			logf("topics: %d high-confidence themes exceed MaxTopicEntries=%d; keeping all (raise the cap)", high, max)
+		}
+		kept := topics[:0:0]
+		for _, t := range topics {
+			if hasHighConfidenceMember(t.Cluster) {
+				kept = append(kept, t)
+			}
+		}
+		return kept
+	}
+	if len(topics) <= max {
 		return topics
 	}
 	return topics[:max]

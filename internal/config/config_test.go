@@ -33,6 +33,13 @@ func TestDefaultsClusterCosineThresholds(t *testing.T) {
 	}
 }
 
+func TestDefaults_RecurrenceForConfidence(t *testing.T) {
+	d := Defaults()
+	if d.Thresholds.RecurrenceForConfidence != 3 {
+		t.Fatalf("RecurrenceForConfidence default want 3, got %d", d.Thresholds.RecurrenceForConfidence)
+	}
+}
+
 func TestOverridesFromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

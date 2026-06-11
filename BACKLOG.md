@@ -16,8 +16,11 @@ the project doc-location convention.)
 > exists.
 >
 > **Build trigger:** the first time a composed topic file shows two real entries
-> where the *older* one should have lost. Build against that concrete bug;
-> ~1 hour given the settled design below.
+> where the *older* one should have lost, **OR the first wrongly-promoted
+> `rules.md` entry you want gone** (rules are the always-on context — a bad one
+> is the case you'll actually hit and want undone; see the rules-generality
+> redesign scope note below). Build against that concrete bug; ~1 hour given the
+> settled design below.
 >
 > **Canonical motivating example (not yet in the corpus):** the 2026-06-03
 > doc-location flip — old preference "specs in `docs/specs/`" vs new "use
@@ -27,6 +30,16 @@ the project doc-location convention.)
 The problem: preferences evolve. Today nothing resolves contradictions within a
 topic cluster — synthesis renders whatever it sees, so both can become bullets
 (or the model silently picks a winner with no recency signal).
+
+> **Scope note (2026-06-09, rules-generality redesign):** this is also the only
+> retraction path for a wrongly-promoted preference. After that redesign,
+> preferences route to **`rules.md`** as well as topics, and there is no other
+> way to "edit out" a bad rule than to state the inverse in a new session. So
+> recency resolution must apply to the **rules destination too**, not just topic
+> clusters — a newer contradicting statement should demote/replace an earlier
+> promoted rule. Sarah accepted "promote boldly now, no undo yet" for the
+> redesign; this item is the eventual undo. Until it ships, a wrong rule
+> persists until contradicted *and* re-synthesized.
 
 **Settled design (4 decisions, 2026-06-03):**
 
@@ -99,6 +112,49 @@ recurring register (most likely `cli-chat` or `slack`) and the absence of stored
 samples is actually felt. Build against that register: synthesize `voice/<reg>.md`
 from the already-tagged voice observations, add `ghost voice` to list them, and
 re-document in the README.
+
+## Domain-knowledge store — DEFERRED (2026-06-09)
+
+> **Status:** surfaced during the rules/generality redesign brainstorm; not
+> built. Out of scope for that redesign and deserves its own brainstorm.
+
+**The idea:** use ghost to capture domain-specific *factual knowledge*, not just
+behavioral preferences — e.g. `topics/data-discovery/xrdm.md` holding facts
+about a system (keys, schemas, ownership, gotchas). A parallel track to the
+preference pipeline, a step toward ghost replacing Claude's memory for project
+facts.
+
+**Why it's a distinct kind, not a variant of today's `topic`:** today's `topic`
+= a domain-scoped *preference* ("how Claude should behave when doing X"). Domain
+knowledge = a domain-scoped *fact* ("XRDM's primary key is X"). They diverge on
+every axis that matters:
+- **Extraction:** facts captured faithfully and specifically; preferences
+  generalized into principles. Opposite instructions.
+- **Gating:** a fact stated once is usually valuable and true (floor likely = 1);
+  a preference needs corroboration (>=2 distinct conversations) to earn durable
+  status.
+- **Generality routing:** facts have no cross-domain generality, so they never
+  route to `rules.md` and bypass the generality judgment entirely.
+- **Lifecycle:** facts go *stale* and get *overwritten* (a schema changes);
+  preferences strengthen/weaken in language. Staleness/overwrite semantics is a
+  meaty separate design question (overlaps with recency-aware resolution above).
+
+**Why deferred:** YAGNI now; the rules/generality redesign is the priority, and
+knowledge needs its own design pass (extraction faithfulness, staleness/
+overwrite, nested namespacing).
+
+**Build trigger:** a concrete, felt need for Claude to recall project/system
+facts across sessions (e.g. wanting ghost to remember XRDM details so they don't
+have to be re-explained).
+
+**Forward-compat constraints honored in the rules/generality redesign (so we
+don't corner ourselves):**
+1. The distinct-conversation gate and extract's "generalize + retain evidence"
+   phrasing are scoped to the **rules/preference path**, not applied globally —
+   a future `knowledge` kind can carry its own policy without unwinding a global
+   assumption.
+2. "Stable slug" permits **hierarchical/path slugs** (`data-discovery/xrdm`),
+   not only flat ones, so nested knowledge namespacing is expressible later.
 
 ## Faceting by activity / role — DECLINED (2026-06-03)
 

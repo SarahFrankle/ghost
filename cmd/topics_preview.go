@@ -40,12 +40,12 @@ var topicsPreviewCmd = &cobra.Command{
 		}
 		var topics []cluster.ClusterMember
 		for _, m := range all {
-			if m.Kind == "topic" {
+			if m.Kind == "preference" {
 				topics = append(topics, m)
 			}
 		}
 		if len(topics) == 0 {
-			fmt.Println("no topic observations found")
+			fmt.Println("no preference observations found")
 			return nil
 		}
 

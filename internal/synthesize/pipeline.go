@@ -11,6 +11,7 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/cluster"
+	"github.com/SarahFrankle/ghost/prompts"
 )
 
 // Pipeline orchestrates stage 3: it produces identity.md, rules.md,
@@ -35,11 +36,12 @@ type Pipeline struct {
 	// TopicModel is used for topic synthesis (the high-volume stage).
 	// Empty falls back to SmartModel so callers that only set SmartModel
 	// keep their old behavior.
-	TopicModel      string
-	GhostDir        string
-	MinRuleEvidence int
-	MinRuleProjects int
-	MaxTopicEntries int
+	TopicModel              string
+	GhostDir                string
+	MaxTopicEntries         int
+	GeneralityModel         string // routing model (defaults to SmartModel if empty)
+	VerdictsPath            string // e.g. <stateDir>/verdicts.json
+	RecurrenceForConfidence int    // distinct-conversation count at which a soft preference earns confidence
 	// Workers bounds how many topic clusters are synthesized concurrently.
 	// Each synthesis is a `claude` subprocess; an unbounded fan-out starves
 	// the parent-side stdin writers and trips claude's no-stdin timeout, so
@@ -73,8 +75,22 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 	}
 
 	identityClusters := pickKind(cf.Clusters, "identity")
-	ruleClusters := FilterRules(cf.Clusters, p.MinRuleEvidence, p.MinRuleProjects)
-	topicClusters := pickKind(cf.Clusters, "topic")
+	prefClusters := pickKind(cf.Clusters, "preference")
+
+	genModel := p.GeneralityModel
+	if genModel == "" {
+		genModel = p.SmartModel
+	}
+	generalThemes, scopedThemes, routeErr := RouteByGenerality(
+		ctx, p.Client, genModel, prefClusters, p.VerdictsPath, prompts.SynthesizeGeneralitySystemHash(), p.logf)
+	if routeErr != nil {
+		return fmt.Errorf("synthesize: generality routing: %w", routeErr)
+	}
+	// One confidence gate, applied to both destinations after routing. The LLM
+	// verdict chose the destination; confidence decides survival. No per-branch
+	// frequency floor (that would re-introduce the rejected hard-frequency gate).
+	ruleClusters := gateByConfidence(generalThemes, p.RecurrenceForConfidence)
+	topicClusters := gateByConfidence(scopedThemes, p.RecurrenceForConfidence)
 
 	userRules := readUserRules(p.GhostDir)
 
@@ -101,7 +117,7 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		return fmt.Errorf("synthesize: %w", topicErr)
 	}
 	ranked := RankByEvidence(topicResults)
-	capped := Cap(ranked, p.MaxTopicEntries)
+	capped := Cap(ranked, p.MaxTopicEntries, p.logf)
 
 	// Re-filter files to the capped set so dropped topics don't get
 	// written.
@@ -158,6 +174,30 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 	}
 	_ = os.RemoveAll(tmpDir)
 	return nil
+}
+
+// gateByConfidence keeps clusters the user would trust: those with a
+// high-confidence member (a directly asserted fact/preference, valid even
+// when stated once -- the stated-once case) OR those that recurred across at
+// least recurrenceForConfidence distinct conversations (a soft preference that
+// earned trust by repetition). This replaces the retired project_count gate;
+// frequency feeds it but is not itself a gate.
+func gateByConfidence(clusters []cluster.Cluster, recurrenceForConfidence int) []cluster.Cluster {
+	out := make([]cluster.Cluster, 0, len(clusters))
+	for _, c := range clusters {
+		high := false
+		for _, m := range c.Members {
+			if m.Confidence == "high" {
+				high = true
+				break
+			}
+		}
+		recurred := recurrenceForConfidence > 0 && c.ConversationCount >= recurrenceForConfidence
+		if high || recurred {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func pickKind(cs []cluster.Cluster, kind string) []cluster.Cluster {

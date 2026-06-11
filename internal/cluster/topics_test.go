@@ -79,6 +79,28 @@ func TestGroupByLabelKeepsAboveThreshold(t *testing.T) {
 	}
 }
 
+func TestGroupByLabel_CountsDistinctConversations(t *testing.T) {
+	members := []ClusterMember{
+		{ObservationHash: "a", ConversationID: "c1", Project: "p1", Text: "x", Kind: "preference"},
+		{ObservationHash: "b", ConversationID: "c1", Project: "p1", Text: "y", Kind: "preference"}, // same conversation
+		{ObservationHash: "c", ConversationID: "c2", Project: "p2", Text: "z", Kind: "preference"}, // different conversation
+	}
+	themed := []string{"L", "L", "L"}
+	clusters, _, err := groupByLabel(members, themed, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clusters) != 1 {
+		t.Fatalf("want 1 cluster, got %d", len(clusters))
+	}
+	if clusters[0].ConversationCount != 2 {
+		t.Fatalf("want ConversationCount=2 (c1,c2), got %d", clusters[0].ConversationCount)
+	}
+	if clusters[0].EvidenceCount != 3 {
+		t.Fatalf("want EvidenceCount=3, got %d", clusters[0].EvidenceCount)
+	}
+}
+
 func TestGroupByLabelFailsOnEmptyLabel(t *testing.T) {
 	members := []ClusterMember{member("a", "p", "t")}
 	if _, _, err := groupByLabel(members, []string{""}, 1); err == nil {

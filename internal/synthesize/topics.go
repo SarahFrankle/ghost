@@ -63,12 +63,8 @@ func BuildTopics(ctx context.Context, client anthropic.Client, model string, clu
 //   - an empty body, or a body that opens with its own H1 (the model invented
 //     a title instead of writing under the supplied one).
 func buildTopics(ctx context.Context, synth synthFunc, clusters []cluster.Cluster, workers int, logf func(string, ...any), progress func(done, total int)) ([]TopicResult, []FileResult, error) {
-	var topics []cluster.Cluster
-	for _, c := range clusters {
-		if c.Kind == "topic" {
-			topics = append(topics, c)
-		}
-	}
+	// Callers pass the routed scoped clusters directly; no kind filtering here.
+	topics := clusters
 	if len(topics) == 0 {
 		return nil, nil, nil
 	}

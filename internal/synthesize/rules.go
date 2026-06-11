@@ -10,24 +10,10 @@ import (
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
-// FilterRules keeps only rule clusters whose evidence and project
-// counts meet the configured minimums. The filter is intentionally in
-// Go, never in the LLM, so the synthesis prompt cannot smuggle in a
-// rule that fails the cross-project threshold.
-func FilterRules(clusters []cluster.Cluster, minEvidence, minProjects int) []cluster.Cluster {
-	out := make([]cluster.Cluster, 0, len(clusters))
-	for _, c := range clusters {
-		if c.Kind != "rule" {
-			continue
-		}
-		if c.EvidenceCount < minEvidence || c.ProjectCount < minProjects {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
+// BuildRules synthesizes rules.md from the general (routed + confidence-gated)
+// clusters. It does no gating itself: routing chose these for the general
+// destination and the confidence gate already decided which survive. The arg
+// is the routed+gated general clusters.
 func BuildRules(ctx context.Context, client anthropic.Client, model string, filtered []cluster.Cluster, userRules string) FileResult {
 	if len(filtered) == 0 {
 		return FileResult{Name: "rules.md", Content: "# Rules\n\nNo cross-project rules inferred yet.\n"}

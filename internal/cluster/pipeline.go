@@ -14,9 +14,9 @@ import (
 
 // Pipeline owns stage 2 end-to-end: load observation files, then split by
 // kind. Identity/rule/voice observations embed (cache-aware) and bucket by
-// cosine; topic observations bypass embedding entirely and route through
-// Topics (label→theme→group). The merged cluster set is written to
-// clusters.json.
+// cosine; preference observations bypass embedding and route through Topics
+// (label→theme→group), same as topics did previously. The merged cluster set
+// is written to clusters.json.
 type Pipeline struct {
 	Embedder       embedding.Embedder
 	EmbeddingModel string
@@ -24,14 +24,14 @@ type Pipeline struct {
 	CacheSavePath  string
 	ClustersPath   string
 	// ThresholdFor returns the cosine threshold for a given kind. Only
-	// identity/rule/voice reach it now (topics no longer cosine-cluster).
+	// identity/rule/voice reach it now (preference no longer cosine-clusters).
 	ThresholdFor func(kind string) float32
 	Workers      int
 	Log          func(format string, args ...any)
-	// Topics, if non-nil, produces topic clusters via label→theme→group.
-	// Topic observations bypass embedding/cosine entirely. When nil, topic
-	// observations are dropped (no topic clusters) — callers set it in
-	// production.
+	// Topics, if non-nil, produces preference clusters via label→theme→group.
+	// Preference observations bypass embedding/cosine entirely. When nil,
+	// preference observations are dropped (no preference clusters) — callers
+	// set it in production.
 	Topics *TopicGrouper
 	// Fingerprint, if non-empty, is written to the resulting clusters.json
 	// so subsequent runs can detect input/threshold/model changes without
@@ -59,10 +59,12 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 		})
 	}
 
-	var topicMembers, rest []ClusterMember
+	// Behavioural preferences cluster through label->theme->group (cosine
+	// retired for them); identity/voice still embed + cosine-bucket.
+	var themeMembers, rest []ClusterMember
 	for _, m := range members {
-		if m.Kind == "topic" {
-			topicMembers = append(topicMembers, m)
+		if m.Kind == "preference" {
+			themeMembers = append(themeMembers, m)
 		} else {
 			rest = append(rest, m)
 		}
@@ -80,8 +82,8 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 		clusters = append(clusters, Bucket(rest, func(i int) []float32 { return vectors[i] }, p.ThresholdFor)...)
 	}
 
-	if p.Topics != nil && len(topicMembers) > 0 {
-		topicClusters, err := p.Topics.Run(ctx, topicMembers)
+	if p.Topics != nil && len(themeMembers) > 0 {
+		topicClusters, err := p.Topics.Run(ctx, themeMembers)
 		if err != nil {
 			return fmt.Errorf("topics: %w", err)
 		}
@@ -165,7 +167,7 @@ func loadAllObservations(observationsDir string) ([]ClusterMember, error) {
 			}
 			out = append(out, ClusterMember{
 				ObservationHash: embedding.ObservationHash(o.Kind, subKey, o.Text),
-				Source:          f.Source,
+				ConversationID:  f.Source,
 				Project:         f.Project,
 				Kind:            o.Kind,
 				Text:            o.Text,

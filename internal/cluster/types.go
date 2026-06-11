@@ -7,7 +7,7 @@ const SchemaVersion = 1
 // ClusterMember is one observation as it appears inside a cluster.
 type ClusterMember struct {
 	ObservationHash string `json:"observation_hash"`
-	Source          string `json:"source"`
+	ConversationID  string `json:"source"` // conversation ID; json tag kept as "source" for clusters.json compatibility
 	Project         string `json:"project"`
 	Kind            string `json:"kind"`
 	Text            string `json:"text"`
@@ -28,12 +28,13 @@ func (m ClusterMember) SubKey() string {
 
 // Cluster is a group of observations that describe the same thing.
 type Cluster struct {
-	Kind          string          `json:"kind"`
-	SubKey        string          `json:"sub_key,omitempty"`
-	Canonical     string          `json:"canonical"`
-	Members       []ClusterMember `json:"members"`
-	EvidenceCount int             `json:"evidence_count"`
-	ProjectCount  int             `json:"project_count"`
+	Kind              string          `json:"kind"`
+	SubKey            string          `json:"sub_key,omitempty"`
+	Canonical         string          `json:"canonical"`
+	Members           []ClusterMember `json:"members"`
+	EvidenceCount     int             `json:"evidence_count"`
+	ProjectCount      int             `json:"project_count"`
+	ConversationCount int             `json:"conversation_count"`
 }
 
 type ClustersFile struct {

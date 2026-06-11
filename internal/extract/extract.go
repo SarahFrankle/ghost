@@ -20,7 +20,7 @@ import (
 // means a prompt, model, or input change and the file must be rebuilt.
 func ObservationsFingerprint(sourceName, project, contentHash, model string) string {
 	return fingerprint.Compute(
-		"extract/v1",
+		"extract/v2",
 		sourceName,
 		project,
 		contentHash,

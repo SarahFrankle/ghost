@@ -49,6 +49,12 @@ var synthesizeIndexSystem string
 func SynthesizeIndexSystem() string     { return synthesizeIndexSystem }
 func SynthesizeIndexSystemHash() string { return hashOf(synthesizeIndexSystem) }
 
+//go:embed synthesize.generality.system.md
+var synthesizeGeneralitySystem string
+
+func SynthesizeGeneralitySystem() string     { return synthesizeGeneralitySystem }
+func SynthesizeGeneralitySystemHash() string { return hashOf(synthesizeGeneralitySystem) }
+
 //go:embed cluster.label.system.md
 var clusterLabelSystem string
 

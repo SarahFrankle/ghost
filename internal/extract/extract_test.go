@@ -127,6 +127,17 @@ func TestIsInjectedSource(t *testing.T) {
 	}
 }
 
+func TestObservationsFingerprint_V2Namespace(t *testing.T) {
+	got := ObservationsFingerprint("claude-code", "ghost", "deadbeef", "claude-haiku-4-5")
+	if got == "" {
+		t.Fatal("fingerprint must be non-empty")
+	}
+	other := ObservationsFingerprint("claude-code", "ghost", "feedface", "claude-haiku-4-5")
+	if got == other {
+		t.Fatal("different content hashes must yield different fingerprints")
+	}
+}
+
 func TestParseObservationsHandlesBracesInsideStrings(t *testing.T) {
 	// Trailing `}` inside the evidence quote previously confused the
 	// LastIndex-based span and produced malformed JSON.

@@ -26,8 +26,6 @@ type Models struct {
 }
 
 type Thresholds struct {
-	RuleMinEvidenceCount int `toml:"rule_min_evidence_count"`
-	RuleMinProjectCount  int `toml:"rule_min_project_count"`
 	// ClusterCosineIdentityRule is the cosine threshold for bucketing
 	// identity and rule observations. Tight by default: these kinds want
 	// near-duplicate merging only.
@@ -36,6 +34,12 @@ type Thresholds struct {
 	// must have to become a topic. Below this, observations are dropped as
 	// noise (logged, not silently).
 	MinClusterSize int `toml:"min_cluster_size"`
+	// RecurrenceForConfidence is the distinct-conversation count at which a
+	// SOFT (non-high-confidence) preference earns confidence and survives the
+	// gate. Directly-asserted high-confidence themes survive at any count, so
+	// this only governs the recurrence path. Replaces the retired project_count
+	// gate; frequency feeds confidence here, it is not a standalone floor.
+	RecurrenceForConfidence int `toml:"recurrence_for_confidence"`
 }
 
 type Paths struct {
@@ -75,10 +79,9 @@ func Defaults() Config {
 			Embedding: "voyage-3-lite",
 		},
 		Thresholds: Thresholds{
-			RuleMinEvidenceCount:      2,
-			RuleMinProjectCount:       2,
 			ClusterCosineIdentityRule: 0.85,
 			MinClusterSize:            3,
+			RecurrenceForConfidence:   3,
 		},
 		Paths: Paths{
 			TranscriptsGlob: "~/.claude/projects/**/*.jsonl",

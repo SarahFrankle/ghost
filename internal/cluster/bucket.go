@@ -83,19 +83,24 @@ func Bucket(members []ClusterMember, vecOf func(i int) []float32, thresholdFor f
 		for _, g := range groups {
 			mems := make([]ClusterMember, 0, len(g.idxs))
 			projects := map[string]struct{}{}
+			convs := map[string]struct{}{}
 			for _, i := range g.idxs {
 				mems = append(mems, members[i])
 				if members[i].Project != "" {
 					projects[members[i].Project] = struct{}{}
 				}
+				if members[i].ConversationID != "" {
+					convs[members[i].ConversationID] = struct{}{}
+				}
 			}
 			out = append(out, Cluster{
-				Kind:          k.kind,
-				SubKey:        k.sub,
-				Canonical:     medoidText(g.idxs, g.sum, members, vecOf),
-				Members:       mems,
-				EvidenceCount: len(mems),
-				ProjectCount:  len(projects),
+				Kind:              k.kind,
+				SubKey:            k.sub,
+				Canonical:         medoidText(g.idxs, g.sum, members, vecOf),
+				Members:           mems,
+				EvidenceCount:     len(mems),
+				ProjectCount:      len(projects),
+				ConversationCount: len(convs),
 			})
 		}
 	}

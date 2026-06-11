@@ -24,6 +24,45 @@ func (c *funcClient) Complete(ctx context.Context, model, system, user string) (
 	return c.fn(user)
 }
 
+func TestGateByConfidence(t *testing.T) {
+	in := []cluster.Cluster{
+		{Canonical: "direct-fact", ConversationCount: 1,
+			Members: []cluster.ClusterMember{{Confidence: "high"}}},
+		{Canonical: "soft-recurring", ConversationCount: 3,
+			Members: []cluster.ClusterMember{{Confidence: "low"}, {Confidence: "medium"}}},
+		{Canonical: "soft-once", ConversationCount: 1,
+			Members: []cluster.ClusterMember{{Confidence: "low"}}},
+	}
+	out := gateByConfidence(in, 3)
+	got := map[string]bool{}
+	for _, c := range out {
+		got[c.Canonical] = true
+	}
+	if !got["direct-fact"] || !got["soft-recurring"] || got["soft-once"] {
+		t.Fatalf("want {direct-fact, soft-recurring} kept and soft-once dropped, got %+v", out)
+	}
+}
+
+func TestGateByConfidence_ZeroThresholdDisablesRecurrence(t *testing.T) {
+	in := []cluster.Cluster{
+		{Canonical: "soft-recurring", ConversationCount: 5,
+			Members: []cluster.ClusterMember{{Confidence: "low"}, {Confidence: "medium"}}},
+		{Canonical: "direct-fact", ConversationCount: 5,
+			Members: []cluster.ClusterMember{{Confidence: "high"}}},
+	}
+	out := gateByConfidence(in, 0)
+	got := map[string]bool{}
+	for _, c := range out {
+		got[c.Canonical] = true
+	}
+	if got["soft-recurring"] {
+		t.Fatalf("soft theme should be dropped when threshold is 0, got %+v", out)
+	}
+	if !got["direct-fact"] {
+		t.Fatalf("high-confidence theme should survive regardless of threshold, got %+v", out)
+	}
+}
+
 func TestPipelineWritesBothFilesAtomically(t *testing.T) {
 	ghostDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(ghostDir, "rules.user.md"), []byte("- avoid em-dashes\n"), 0o644); err != nil {
@@ -33,12 +72,14 @@ func TestPipelineWritesBothFilesAtomically(t *testing.T) {
 		Clusters: []cluster.Cluster{
 			{Kind: "identity", Canonical: "works at Miro", EvidenceCount: 3, ProjectCount: 2,
 				Members: []cluster.ClusterMember{{Text: "works at Miro", Evidence: "t1", Project: "p"}}},
-			{Kind: "rule", Canonical: "prefer integration tests", EvidenceCount: 3, ProjectCount: 2,
-				Members: []cluster.ClusterMember{{Text: "x", Evidence: "t1", Project: "p"}}},
+			{Kind: "preference", Canonical: "prefer integration tests", EvidenceCount: 3, ProjectCount: 2,
+				Members: []cluster.ClusterMember{{Text: "x", Evidence: "t1", Project: "p", Confidence: "high"}}},
 		},
 	}
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"prefer integration tests","general":true}]}`, nil
 		case strings.Contains(user, "works at Miro"):
 			return "# Identity\n\nworks at Miro.\n", nil
 		case strings.Contains(user, "prefer integration tests"):
@@ -47,11 +88,10 @@ func TestPipelineWritesBothFilesAtomically(t *testing.T) {
 		return "", fmt.Errorf("unexpected payload: %q", user)
 	}}
 	p := &Pipeline{
-		Client:          client,
-		SmartModel:      "smart",
-		GhostDir:        ghostDir,
-		MinRuleEvidence: 2,
-		MinRuleProjects: 2,
+		Client:       client,
+		SmartModel:   "smart",
+		GhostDir:     ghostDir,
+		VerdictsPath: filepath.Join(ghostDir, "verdicts.json"),
 	}
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
@@ -77,12 +117,14 @@ func TestPipelinePreservesPriorGenerationOnPartialFailure(t *testing.T) {
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
 		{Kind: "identity", Canonical: "ident-canon", EvidenceCount: 1, ProjectCount: 1,
 			Members: []cluster.ClusterMember{{Text: "ident-canon", Evidence: "t", Project: "p"}}},
-		{Kind: "rule", Canonical: "rule-canon", EvidenceCount: 3, ProjectCount: 2,
-			Members: []cluster.ClusterMember{{Text: "rule-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "preference", Canonical: "rule-canon", EvidenceCount: 3, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "rule-canon", Evidence: "t", Project: "p", Confidence: "high"}}},
 	}}
 
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"rule-canon","general":true}]}`, nil
 		case strings.Contains(user, "ident-canon"):
 			return "# Identity\n\nnew\n", nil
 		case strings.Contains(user, "rule-canon"):
@@ -91,7 +133,7 @@ func TestPipelinePreservesPriorGenerationOnPartialFailure(t *testing.T) {
 		return "", fmt.Errorf("unexpected payload: %q", user)
 	}}
 	p := &Pipeline{Client: client, SmartModel: "x", GhostDir: ghostDir,
-		MinRuleEvidence: 2, MinRuleProjects: 2}
+		VerdictsPath: filepath.Join(ghostDir, "verdicts.json")}
 
 	if err := p.Run(context.Background(), cf); err == nil {
 		t.Fatal("expected error on partial failure")
@@ -120,6 +162,8 @@ func TestPipelineWritesTopicsSubdir(t *testing.T) {
 	dir := t.TempDir()
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"topic-canon","general":false}]}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "id-canon"):
@@ -132,14 +176,14 @@ func TestPipelineWritesTopicsSubdir(t *testing.T) {
 	}}
 	p := &Pipeline{
 		Client: client, SmartModel: "smart", GhostDir: dir,
-		MinRuleEvidence: 2, MinRuleProjects: 2,
+		VerdictsPath: filepath.Join(dir, "verdicts.json"),
 	}
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
 		{Kind: "identity", Canonical: "id-canon", EvidenceCount: 2, ProjectCount: 2,
 			Members: []cluster.ClusterMember{{Text: "id-canon", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", Canonical: "topic-canon",
+		{Kind: "preference", Canonical: "topic-canon",
 			EvidenceCount: 3, ProjectCount: 2,
-			Members: []cluster.ClusterMember{{Text: "topic-canon", Evidence: "t", Project: "p"}}},
+			Members: []cluster.ClusterMember{{Text: "topic-canon", Evidence: "t", Project: "p", Confidence: "high"}}},
 	}}
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
@@ -157,6 +201,8 @@ func TestPipelineRespectsTopicCap(t *testing.T) {
 	dir := t.TempDir()
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"alpha-topic","general":false},{"label":"beta-topic","general":false}]}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "alpha-topic"):
@@ -168,13 +214,17 @@ func TestPipelineRespectsTopicCap(t *testing.T) {
 	}}
 	p := &Pipeline{
 		Client: client, SmartModel: "smart", GhostDir: dir,
-		MinRuleEvidence: 1, MinRuleProjects: 1, MaxTopicEntries: 1,
+		MaxTopicEntries:         1,
+		VerdictsPath:            filepath.Join(dir, "verdicts.json"),
+		RecurrenceForConfidence: 3,
 	}
+	// Soft (non-high-confidence) themes that recurred enough to pass the gate;
+	// the evidence-based cap then keeps only the highest-evidence one.
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
-		{Kind: "topic", Canonical: "alpha-topic", EvidenceCount: 10, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "alpha-topic", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", Canonical: "beta-topic", EvidenceCount: 1, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "beta-topic", Evidence: "t", Project: "p"}}},
+		{Kind: "preference", Canonical: "alpha-topic", EvidenceCount: 10, ProjectCount: 1, ConversationCount: 3,
+			Members: []cluster.ClusterMember{{Text: "alpha-topic", Evidence: "t", Project: "p", Confidence: "medium"}}},
+		{Kind: "preference", Canonical: "beta-topic", EvidenceCount: 1, ProjectCount: 1, ConversationCount: 3,
+			Members: []cluster.ClusterMember{{Text: "beta-topic", Evidence: "t", Project: "p", Confidence: "medium"}}},
 	}}
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatal(err)
@@ -207,6 +257,8 @@ func TestPipelineDistinctTopicsBothSurvive(t *testing.T) {
 	// returns.
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"first-canon","general":false},{"label":"second-canon","general":false}]}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "ident-canon"):
@@ -221,12 +273,13 @@ func TestPipelineDistinctTopicsBothSurvive(t *testing.T) {
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
 		{Kind: "identity", Canonical: "ident-canon", EvidenceCount: 1, ProjectCount: 1,
 			Members: []cluster.ClusterMember{{Text: "ident-canon", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", Canonical: "first-canon", EvidenceCount: 1, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "first-canon", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", Canonical: "second-canon", EvidenceCount: 1, ProjectCount: 1,
-			Members: []cluster.ClusterMember{{Text: "second-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "preference", Canonical: "first-canon", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "first-canon", Evidence: "t", Project: "p", Confidence: "high"}}},
+		{Kind: "preference", Canonical: "second-canon", EvidenceCount: 1, ProjectCount: 1,
+			Members: []cluster.ClusterMember{{Text: "second-canon", Evidence: "t", Project: "p", Confidence: "high"}}},
 	}}
-	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20}
+	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20,
+		VerdictsPath: filepath.Join(dir, "verdicts.json")}
 	if err := p.Run(context.Background(), cf); err != nil {
 		t.Fatalf("expected successful run, got: %v", err)
 	}
@@ -254,6 +307,8 @@ func TestPipelineTopicSynthFailurePreservesPriorTopics(t *testing.T) {
 
 	client := &funcClient{fn: func(user string) (string, error) {
 		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"boom-canon","general":false}]}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "ident-canon"):
@@ -267,10 +322,11 @@ func TestPipelineTopicSynthFailurePreservesPriorTopics(t *testing.T) {
 	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
 		{Kind: "identity", Canonical: "ident-canon",
 			Members: []cluster.ClusterMember{{Text: "ident-canon", Evidence: "t", Project: "p"}}},
-		{Kind: "topic", Canonical: "boom-canon", EvidenceCount: 1,
-			Members: []cluster.ClusterMember{{Text: "boom-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "preference", Canonical: "boom-canon", EvidenceCount: 1,
+			Members: []cluster.ClusterMember{{Text: "boom-canon", Evidence: "t", Project: "p", Confidence: "high"}}},
 	}}
-	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20}
+	p := &Pipeline{Client: client, SmartModel: "smart", GhostDir: dir, MaxTopicEntries: 20,
+		VerdictsPath: filepath.Join(dir, "verdicts.json")}
 	if err := p.Run(context.Background(), cf); err == nil {
 		t.Fatal("expected error when topic synthesis fails")
 	}

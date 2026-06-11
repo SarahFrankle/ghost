@@ -4,7 +4,28 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/SarahFrankle/ghost/internal/cluster"
 )
+
+// A high-confidence stated-once theme must survive Cap even when a soft theme
+// has higher evidence: the confidence gate protected it, evidence truncation
+// must not undo that.
+func TestCapPinsHighConfidence(t *testing.T) {
+	highConf := TopicResult{
+		Slug: "direct-fact", EvidenceTotal: 1,
+		Cluster: cluster.Cluster{Members: []cluster.ClusterMember{{Confidence: "high"}}},
+	}
+	soft := TopicResult{
+		Slug: "soft", EvidenceTotal: 10,
+		Cluster: cluster.Cluster{Members: []cluster.ClusterMember{{Confidence: "low"}}},
+	}
+	ranked := RankByEvidence([]TopicResult{soft, highConf})
+	out := Cap(ranked, 1, nil)
+	if len(out) != 1 || out[0].Slug != "direct-fact" {
+		t.Fatalf("want high-confidence direct-fact pinned, got %+v", out)
+	}
+}
 
 func TestBuildIndexFromTopicResults(t *testing.T) {
 	f := &fakeClient{resp: "# Index\n\n## Topics\n- topics/testing.md (triggers: tests, pytest)\n- topics/git.md (triggers: rebase, branch)\n"}

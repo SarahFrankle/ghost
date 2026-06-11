@@ -381,7 +381,7 @@ func runCluster(ctx context.Context) error {
 		ThemeModel:              themeModel,
 		ThemeIdentifyPromptHash: prompts.ClusterThemeIdentifySystemHash(),
 		ThemeMapPromptHash:      prompts.ClusterThemeMapSystemHash(),
-		MinClusterSize:          cfg.Thresholds.MinClusterSize,
+		MinClusterSize:          1, // stop dropping at grouping; noise floors apply post-routing in synthesize
 		Workers:                 cfg.Batching.ExtractWorkers,
 		Log:                     log.Printf,
 		Progress:                stderrCounter("cluster: topics: completed"),
@@ -460,7 +460,7 @@ func runSynthesize(ctx context.Context) error {
 		return fmt.Errorf("load clusters.json (run `ghost cluster` first): %w", err)
 	}
 
-	expectedFP := synthesizeFingerprint(cf.Fingerprint, cfg.Models.Smart, cfg.Models.Topic, cfg.Thresholds.RuleMinEvidenceCount, cfg.Thresholds.RuleMinProjectCount, cfg.Index.MaxTopicEntries)
+	expectedFP := synthesizeFingerprint(cf.Fingerprint, cfg.Models.Smart, cfg.Models.Topic, cfg.Thresholds.RecurrenceForConfidence, cfg.Index.MaxTopicEntries)
 	sidecarPath := filepath.Join(stateDir, "synthesize.fingerprint")
 	if !composeResynth && synthesizeOutputsFresh(outDir, sidecarPath, expectedFP) {
 		fmt.Println("synthesize: up to date (fingerprint match)")
@@ -472,16 +472,17 @@ func runSynthesize(ctx context.Context) error {
 		return err
 	}
 	p := &synthesize.Pipeline{
-		Client:          client,
-		SmartModel:      cfg.Models.Smart,
-		TopicModel:      cfg.Models.Topic,
-		GhostDir:        outDir,
-		MinRuleEvidence: cfg.Thresholds.RuleMinEvidenceCount,
-		MinRuleProjects: cfg.Thresholds.RuleMinProjectCount,
-		MaxTopicEntries: cfg.Index.MaxTopicEntries,
-		Workers:         cfg.Batching.SynthWorkers,
-		Log:             log.Printf,
-		Progress:        stderrCounter("synthesize: topics"),
+		Client:                  client,
+		SmartModel:              cfg.Models.Smart,
+		TopicModel:              cfg.Models.Topic,
+		GhostDir:                outDir,
+		MaxTopicEntries:         cfg.Index.MaxTopicEntries,
+		GeneralityModel:         cfg.Models.Smart,
+		VerdictsPath:            filepath.Join(stateDir, "verdicts.json"),
+		RecurrenceForConfidence: cfg.Thresholds.RecurrenceForConfidence,
+		Workers:                 cfg.Batching.SynthWorkers,
+		Log:                     log.Printf,
+		Progress:                stderrCounter("synthesize: topics"),
 	}
 	if err := p.Run(ctx, cf); err != nil {
 		return err
@@ -523,12 +524,13 @@ func stderrCounter(label string) func(done, total int) {
 // synthesizeFingerprint composes the cache key for synthesize outputs.
 // Inputs: the clusters.json fingerprint (which already captures observation
 // state, embedding model, and the per-kind cosine thresholds), the smart and
-// topic models, the four synth prompts, and the structural thresholds that
-// change which clusters survive to be rendered. The "synthesize/v2" namespace
-// guarantees stale chunk-2 caches miss on the first chunk-3 run.
-func synthesizeFingerprint(clustersFP, smartModel, topicModel string, minRuleEvidence, minRuleProjects, maxTopicEntries int) string {
+// topic models, the five synth prompts (including generality routing), and the
+// structural thresholds that change which clusters survive to be rendered. The
+// "synthesize/v3" namespace guarantees stale v2 caches miss on the first run
+// after the generality-routing redesign.
+func synthesizeFingerprint(clustersFP, smartModel, topicModel string, recurrenceForConfidence, maxTopicEntries int) string {
 	return fingerprint.Compute(
-		"synthesize/v2",
+		"synthesize/v3",
 		clustersFP,
 		smartModel,
 		topicModel,
@@ -536,8 +538,8 @@ func synthesizeFingerprint(clustersFP, smartModel, topicModel string, minRuleEvi
 		prompts.SynthesizeRulesSystemHash(),
 		prompts.SynthesizeTopicsSystemHash(),
 		prompts.SynthesizeIndexSystemHash(),
-		fmt.Sprintf("rule_evidence=%d", minRuleEvidence),
-		fmt.Sprintf("rule_projects=%d", minRuleProjects),
+		prompts.SynthesizeGeneralitySystemHash(),
+		fmt.Sprintf("recurrence_for_confidence=%d", recurrenceForConfidence),
 		fmt.Sprintf("max_topics=%d", maxTopicEntries),
 	)
 }

@@ -13,10 +13,11 @@ import (
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
-// groupByLabel groups topic members by their themed label, keeping only
-// groups with at least minClusterSize members. It returns one Cluster per
-// surviving label (Canonical = the label) and the number of members dropped
-// as below-threshold noise.
+// groupByLabel groups members by their themed label, keeping only groups with
+// at least minClusterSize members. It returns one Cluster per surviving label
+// (Canonical = the label) with Kind carried from the input members (all members
+// in one label-partition share a kind) rather than hard-coded. The number of
+// members dropped as below-threshold noise is also returned.
 //
 // themedLabelOf[i] is the themed label for members[i]; an empty label is an
 // error — every member must resolve to a label (the grouping half of the
@@ -54,18 +55,23 @@ func groupByLabel(members []ClusterMember, themedLabelOf []string, minClusterSiz
 		})
 		mems := make([]ClusterMember, 0, len(idxs))
 		projects := map[string]struct{}{}
+		convs := map[string]struct{}{}
 		for _, i := range idxs {
 			mems = append(mems, members[i])
 			if members[i].Project != "" {
 				projects[members[i].Project] = struct{}{}
 			}
+			if members[i].ConversationID != "" {
+				convs[members[i].ConversationID] = struct{}{}
+			}
 		}
 		clusters = append(clusters, Cluster{
-			Kind:          "topic",
-			Canonical:     lbl,
-			Members:       mems,
-			EvidenceCount: len(mems),
-			ProjectCount:  len(projects),
+			Kind:              members[idxs[0]].Kind,
+			Canonical:         lbl,
+			Members:           mems,
+			EvidenceCount:     len(mems),
+			ProjectCount:      len(projects),
+			ConversationCount: len(convs),
 		})
 	}
 	if accounted != len(members) {

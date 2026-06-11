@@ -24,7 +24,7 @@ type ObservationsFile struct {
 }
 
 var validKinds = map[string]bool{
-	"identity": true, "rule": true, "topic": true, "voice": true,
+	"identity": true, "preference": true, "voice": true,
 }
 
 func (o Observation) Validate() error {
