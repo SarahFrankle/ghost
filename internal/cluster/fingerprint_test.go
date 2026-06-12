@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/fingerprint"
@@ -31,31 +32,56 @@ func TestClustersFingerprintDistinguishesInputs(t *testing.T) {
 	}
 }
 
-func TestObservationsFingerprintsSortsAndReadsFile(t *testing.T) {
+func TestObservationsFingerprintsIgnoreExtractFingerprintAndTimestamp(t *testing.T) {
 	dir := t.TempDir()
-	write := func(name, fp string) {
-		f := extract.ObservationsFile{Source: "s", Project: "p", ContentHash: "c", Fingerprint: fp}
+	obs := []extract.Observation{{Kind: "identity", Text: "t", Evidence: "turn 1: q"}}
+	write := func(name, extractFP string, when time.Time) {
+		f := extract.ObservationsFile{
+			Source: "s", Project: "p", ContentHash: "c",
+			Fingerprint: extractFP, ExtractedAt: when,
+			Observations: obs,
+		}
 		b, _ := json.Marshal(f)
 		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("z.json", "ZZZ")
-	write("a.json", "AAA")
-	write("m.json", "MMM")
+	// Same observation content, different extract fingerprint + timestamp:
+	// the content fingerprint must be identical so a prompt/model bump that
+	// produces unchanged observations does not churn downstream caches.
+	write("a.json", "EXTRACT-FP-1", time.Unix(1, 0))
+	write("b.json", "EXTRACT-FP-2", time.Unix(2, 0))
 
 	got, err := ObservationsFingerprints(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"AAA", "MMM", "ZZZ"}
-	if len(got) != len(want) {
-		t.Fatalf("len=%d, want %d", len(got), len(want))
+	if len(got) != 2 {
+		t.Fatalf("len=%d, want 2", len(got))
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("position %d: got %q, want %q", i, got[i], want[i])
+	if got[0] != got[1] {
+		t.Fatalf("identical content must yield identical fingerprints; got %q and %q", got[0], got[1])
+	}
+}
+
+func TestObservationsFingerprintsChangeWithContent(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, obs []extract.Observation) {
+		f := extract.ObservationsFile{Source: "s", Project: "p", Observations: obs}
+		b, _ := json.Marshal(f)
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
 		}
+	}
+	write("a.json", []extract.Observation{{Kind: "identity", Text: "alpha", Evidence: "turn 1: q"}})
+	write("b.json", []extract.Observation{{Kind: "identity", Text: "beta", Evidence: "turn 1: q"}})
+
+	got, err := ObservationsFingerprints(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] == got[1] {
+		t.Fatalf("differing content must yield differing fingerprints; got %v", got)
 	}
 }
 

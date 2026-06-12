@@ -220,9 +220,11 @@ func runExtract(ctx context.Context) error {
 	workers = max(workers, 1)
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
-	var processed, failed int
+	var processed, failed, totalObs int
+	var failures []string
 	total := len(pending)
 	var mu sync.Mutex
+	counter := stderrCounter("extract:")
 
 	for _, j := range pending {
 		wg.Add(1)
@@ -231,12 +233,21 @@ func runExtract(ctx context.Context) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result, err := runner.Run(ctx, src, j.c, j.hash)
+			result, runErr := runner.Run(ctx, src, j.c, j.hash)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil {
-				log.Printf("extract %s: %v", j.c.ID, err)
+			defer func() {
+				if counter != nil {
+					counter(processed+failed, total)
+				}
+			}()
+
+			fail := func(format string, args ...any) {
 				failed++
+				failures = append(failures, fmt.Sprintf(format, args...))
+			}
+			if runErr != nil {
+				fail("%s: %v", filepath.Base(j.c.ID), runErr)
 				return
 			}
 			obsFileName := observationsFileName(j.hash) + ".json"
@@ -245,13 +256,11 @@ func runExtract(ctx context.Context) error {
 
 			body, err := json.MarshalIndent(result, "", "  ")
 			if err != nil {
-				log.Printf("marshal %s: %v", j.c.ID, err)
-				failed++
+				fail("%s: marshal: %v", filepath.Base(j.c.ID), err)
 				return
 			}
 			if err := atomicfs.WriteFile(obsAbsPath, body, 0o644); err != nil {
-				log.Printf("write %s: %v", obsAbsPath, err)
-				failed++
+				fail("%s: write: %v", filepath.Base(j.c.ID), err)
 				return
 			}
 			l.Mark(j.c.ID, ledger.Entry{
@@ -263,7 +272,7 @@ func runExtract(ctx context.Context) error {
 				log.Printf("ledger save after %s: %v", j.c.ID, err)
 			}
 			processed++
-			fmt.Printf("extracted %d observation(s) from %s (%d/%d)\n", len(result.Observations), filepath.Base(j.c.ID), processed, total)
+			totalObs += len(result.Observations)
 		}()
 	}
 	wg.Wait()
@@ -272,7 +281,10 @@ func runExtract(ctx context.Context) error {
 	if err := l.Save(ledgerPath); err != nil {
 		return err
 	}
-	fmt.Printf("done: processed=%d failed=%d\n", processed, failed)
+	fmt.Printf("done: processed=%d failed=%d observations=%d\n", processed, failed, totalObs)
+	for _, f := range failures {
+		fmt.Printf("  failed: %s\n", f)
+	}
 	return nil
 }
 
