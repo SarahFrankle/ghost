@@ -85,6 +85,39 @@ func TestObservationsFingerprintsChangeWithContent(t *testing.T) {
 	}
 }
 
+func TestObservationsFingerprintsSkipEmptyFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, obs []extract.Observation) {
+		f := extract.ObservationsFile{Source: "s", Project: "p", Observations: obs}
+		b, _ := json.Marshal(f)
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.json", []extract.Observation{{Kind: "identity", Text: "alpha", Evidence: "turn 1: q"}})
+
+	before, err := ObservationsFingerprints(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Adding a transcript that yielded zero observations must not change the
+	// fingerprint set: it contributes nothing to clustering or synthesis, so
+	// it must not force a re-cluster + re-synthesize.
+	write("empty.json", nil)
+
+	after, err := ObservationsFingerprints(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("empty observations file must be skipped; len=%d, want 1", len(after))
+	}
+	if before[0] != after[0] {
+		t.Fatalf("adding an empty file must not change the fingerprint set:\nbefore=%v\nafter=%v", before, after)
+	}
+}
+
 func TestClustersFingerprintUsesV4Namespace(t *testing.T) {
 	got := ClustersFingerprint([]string{"a"}, "m", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3)
 	want := fingerprint.Compute(

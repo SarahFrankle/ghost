@@ -21,6 +21,12 @@ import (
 // decouples the cluster cache key from the extract prompt and model: a prompt
 // or model bump that re-extracts to byte-identical observations no longer
 // forces a full cluster + synthesize rebuild.
+//
+// Files with zero observations are skipped entirely: a transcript that yields
+// no observations contributes nothing to clustering or synthesis, so it must
+// not perturb the cache key. Without this, every newly-processed empty
+// transcript would append an entry here, change the clusters fingerprint, and
+// force a wasteful re-cluster + re-synthesize that produces identical output.
 func ObservationsFingerprints(obsDir string) ([]string, error) {
 	entries, err := os.ReadDir(obsDir)
 	if err != nil {
@@ -41,6 +47,9 @@ func ObservationsFingerprints(obsDir string) ([]string, error) {
 		var f extract.ObservationsFile
 		if err := json.Unmarshal(b, &f); err != nil {
 			return nil, fmt.Errorf("decode %s: %w", e.Name(), err)
+		}
+		if len(f.Observations) == 0 {
+			continue
 		}
 		out = append(out, observationsContentFingerprint(f))
 	}

@@ -59,6 +59,14 @@ func (c *cliClient) Complete(ctx context.Context, model, system, user string) (s
 	}
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 
+	// Suppress the ai-title sidecar. `--no-session-persistence` stops the
+	// transcript write but NOT the background Haiku call that generates a
+	// session title, which still drops a one-record `{"type":"ai-title"}`
+	// JSONL under ~/.claude/projects/<cwd>/. Across many compose runs those
+	// stubs accumulate in ghost's own project dir. CLAUDE_CODE_DISABLE_TERMINAL_TITLE
+	// skips that title call in `claude -p`, so no sidecar is written.
+	cmd.Env = append(os.Environ(), "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1")
+
 	// Hand the payload to claude as a real file (fd 0), not a strings.Reader.
 	// os/exec connects an *os.File stdin directly to the child; any other
 	// io.Reader instead spawns a parent-side copier goroutine. Under a wide

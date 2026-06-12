@@ -138,6 +138,26 @@ func TestObservationsFingerprint_V2Namespace(t *testing.T) {
 	}
 }
 
+func TestRenderPayloadFramesTranscriptAsData(t *testing.T) {
+	// The trailing instruction (instruction recency) and <transcript>
+	// delimiters stop the cheap model from continuing a long transcript
+	// instead of emitting observations (the "no JSON object found" failure).
+	turns := []source.Turn{
+		{Index: 1, Role: "user", Text: "hello"},
+		{Index: 2, Role: "assistant", Text: "hi"},
+	}
+	got := renderPayload(turns)
+	if !strings.HasPrefix(got, payloadPreamble) {
+		t.Errorf("payload must open with the data-framing preamble")
+	}
+	if !strings.HasSuffix(got, payloadEpilogue) {
+		t.Errorf("payload must close with the trailing output instruction")
+	}
+	if !strings.Contains(got, "turn 1 (user): hello") {
+		t.Errorf("payload must still contain the rendered turns, got:\n%s", got)
+	}
+}
+
 func TestParseObservationsHandlesBracesInsideStrings(t *testing.T) {
 	// Trailing `}` inside the evidence quote previously confused the
 	// LastIndex-based span and produced malformed JSON.
