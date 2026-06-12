@@ -6,16 +6,21 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/fingerprint"
 )
 
-// ObservationsFingerprints reads every *.json file under obsDir, decodes
-// it as an ObservationsFile, and returns each file's Fingerprint sorted
-// lexically. Observations files written before chunk 2 lack a fingerprint;
-// those contribute an empty slot, which still forces a rebuild after they
-// are re-extracted (because the slot becomes non-empty).
+// ObservationsFingerprints reads every *.json file under obsDir, decodes it as
+// an ObservationsFile, and returns one content fingerprint per file, sorted
+// lexically. The fingerprint hashes only what flows downstream into clustering
+// and synthesis — the file's Source, Project, and the content of each
+// observation (kind, text, evidence, context, confidence) — and deliberately
+// ignores the stored extract Fingerprint and ExtractedAt timestamp. This
+// decouples the cluster cache key from the extract prompt and model: a prompt
+// or model bump that re-extracts to byte-identical observations no longer
+// forces a full cluster + synthesize rebuild.
 func ObservationsFingerprints(obsDir string) ([]string, error) {
 	entries, err := os.ReadDir(obsDir)
 	if err != nil {
@@ -37,10 +42,26 @@ func ObservationsFingerprints(obsDir string) ([]string, error) {
 		if err := json.Unmarshal(b, &f); err != nil {
 			return nil, fmt.Errorf("decode %s: %w", e.Name(), err)
 		}
-		out = append(out, f.Fingerprint)
+		out = append(out, observationsContentFingerprint(f))
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// observationsContentFingerprint hashes the downstream-relevant content of one
+// observations file. Per-observation contributions are sorted so model output
+// reordering of otherwise-identical observations is not treated as a change.
+func observationsContentFingerprint(f extract.ObservationsFile) string {
+	obs := make([]string, 0, len(f.Observations))
+	for _, o := range f.Observations {
+		obs = append(obs, strings.Join(
+			[]string{o.Kind, o.Confidence, o.Context, o.Text, o.Evidence}, "\x1f"))
+	}
+	sort.Strings(obs)
+	parts := make([]string, 0, len(obs)+3)
+	parts = append(parts, "obs-content/v1", "source="+f.Source, "project="+f.Project)
+	parts = append(parts, obs...)
+	return fingerprint.Compute(parts...)
 }
 
 // ClustersFingerprint composes the cache key for clusters.json. Identity/rule/
