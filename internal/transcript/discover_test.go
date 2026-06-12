@@ -48,6 +48,25 @@ func TestDiscoverSkipsSubagentTranscripts(t *testing.T) {
 	}
 }
 
+func TestDiscoverSkipsAITitleSidecars(t *testing.T) {
+	dir := t.TempDir()
+	convo := filepath.Join(dir, "convo.jsonl")
+	sidecar := filepath.Join(dir, "sidecar.jsonl")
+	_ = os.WriteFile(convo, []byte(`{"type":"user","message":{"role":"user","content":"hi"}}`+"\n"), 0o644)
+	_ = os.WriteFile(sidecar, []byte(`{"type":"ai-title","aiTitle":"Some title","sessionId":"abc"}`+"\n"), 0o644)
+	past := time.Now().Add(-10 * time.Minute)
+	_ = os.Chtimes(convo, past, past)
+	_ = os.Chtimes(sidecar, past, past)
+
+	got, err := Discover(filepath.Join(dir, "*.jsonl"), 5*time.Minute, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Path != convo {
+		t.Fatalf("expected only %q; got %+v", convo, got)
+	}
+}
+
 func TestProjectFromPath(t *testing.T) {
 	in := "/Users/sarah/.claude/projects/-Users-sarah-dev-projects/abc.jsonl"
 	if p := projectFromPath(in); p != "Users-sarah-dev-projects" {
