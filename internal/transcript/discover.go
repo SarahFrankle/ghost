@@ -62,6 +62,11 @@ func isSubagentTranscript(p string) bool {
 	return slices.Contains(strings.Split(filepath.ToSlash(p), "/"), "subagents")
 }
 
+// IsSidecar reports whether p is a non-conversation sidecar file (see
+// isSidecarFile). Exposed for maintenance tooling that prunes state written
+// for files that should never have been discovered.
+func IsSidecar(p string) bool { return isSidecarFile(p) }
+
 // isSidecarFile reports whether p is one of the per-session sidecar JSONL
 // files Claude Code writes alongside real transcripts (e.g. `ai-title`,
 // which holds only a generated title and sessionId). These carry no
