@@ -46,3 +46,19 @@ func TestDetectTopicReads_WindowAndGate(t *testing.T) {
 		t.Errorf("got[1] context = %q", got[1].TaskContextExcerpt)
 	}
 }
+
+func TestContextWindow_MultiBlockUserTurn(t *testing.T) {
+	topicsDir := "/Users/sarah/.ghost/topics"
+	evs := []transcript.Event{
+		{Line: 1, Timestamp: "T0", Role: "user", Kind: "text", Text: "first block"},
+		{Line: 1, Timestamp: "T0", Role: "user", Kind: "text", Text: "second block"},
+		{Line: 2, Role: "assistant", Kind: "tool_use", Tool: "Read", Input: map[string]string{"file_path": topicsDir + "/git.md"}},
+	}
+	got := DetectTopicReads("c", evs, topicsDir, map[string][]string{})
+	if len(got) != 1 {
+		t.Fatalf("want 1, got %d", len(got))
+	}
+	if got[0].TaskContextExcerpt != "first block\nsecond block" {
+		t.Errorf("context = %q (want both blocks joined)", got[0].TaskContextExcerpt)
+	}
+}

@@ -50,10 +50,14 @@ func topicSlug(fp, prefix string) (string, bool) {
 	return strings.TrimSuffix(rest, ".md"), true
 }
 
-// contextWindow gathers user text turns from the most recent user turn at or
-// before index readIdx, up to (not including) the next user turn. Returns the
-// joined text and the timestamp of the first bounding user turn.
+// contextWindow gathers all contiguous user-text events of the bounding user
+// turn at or before readIdx. It walks backward to find the first user-text
+// event, then forward collecting consecutive user-text events, stopping at the
+// first event that is not a user-text event (the assistant turn ends the user
+// turn). Returns the joined text and the timestamp of the first event found.
 func contextWindow(evs []transcript.Event, readIdx int) (string, string) {
+	// Walk backward to find the most recent user-text event, then continue
+	// backward to find the start of that contiguous user-text block.
 	start := -1
 	for j := readIdx; j >= 0; j-- {
 		if evs[j].Kind == "text" && evs[j].Role == "user" {
@@ -64,16 +68,18 @@ func contextWindow(evs []transcript.Event, readIdx int) (string, string) {
 	if start == -1 {
 		return "", ""
 	}
+	// Extend start backward through any additional contiguous user-text events.
+	for start > 0 && evs[start-1].Role == "user" && evs[start-1].Kind == "text" {
+		start--
+	}
 	ts := evs[start].Timestamp
 	var parts []string
 	for j := start; j < len(evs); j++ {
-		if evs[j].Kind != "text" || evs[j].Role != "user" {
+		if evs[j].Role == "user" && evs[j].Kind == "text" {
+			parts = append(parts, evs[j].Text)
 			continue
 		}
-		if j > start {
-			break // next user turn ends the window
-		}
-		parts = append(parts, evs[j].Text)
+		break // first non-(user text) event ends the user turn
 	}
 	return strings.Join(parts, "\n"), ts
 }
