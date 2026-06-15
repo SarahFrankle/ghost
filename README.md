@@ -171,10 +171,13 @@ These two layers do different jobs, and the distinction matters:
   thought, not mid-sentence" governs Claude's output regardless of
   what's being written.
 
-A rule must show up in at least 2 conversations across at least 2
-different projects before it becomes a global rule. Single-project
-guidance lives in `topics/<name>.md` and loads only when you're
-working in that domain.
+A preference becomes a global rule only if ghost judges it generally
+applicable (not tied to one project or domain) and it clears a
+confidence gate: directly-asserted, high-confidence preferences
+promote even when stated once, while softer preferences must recur
+across at least `recurrence_for_confidence` distinct conversations
+(default 3). Preferences judged project- or domain-scoped live in
+`topics/<name>.md` and load only when you're working in that domain.
 
 ### Example topic file
 
@@ -216,8 +219,10 @@ Three-stage pipeline:
    examples" / "example-first documentation") land in one topic.
 3. **synthesize** — corpus-level, smart model. Writes
    `identity.md`, `rules.md`, `index.md`, and `topics/*.md` from the
-   clusters. Rules are filtered to those appearing in at least 2
-   conversations across at least 2 projects.
+   clusters. Preference clusters are routed general-vs-scoped: general
+   ones that clear the confidence gate (high-confidence, or recurring
+   across enough distinct conversations) become `rules.md`; scoped
+   ones become `topics/*.md`.
 
 Observations are an immutable, append-only log keyed by content hash.
 The files in `~/.ghost/` are a regenerable materialized view. You can
