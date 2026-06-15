@@ -58,8 +58,11 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	}
 
 	total := 0
+	counter := stderrCounter("scanning")
 	for i, c := range convs {
-		fmt.Fprintf(os.Stderr, "\rscanning %d/%d", i+1, len(convs))
+		if counter != nil {
+			counter(i+1, len(convs))
+		}
 		evs, err := transcript.ParseEvents(c.ID)
 		if err != nil {
 			continue
@@ -77,7 +80,6 @@ func runAudit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Printf("appended %d new topic-read events to %s\n", total, jsonlPath)
 	return nil
 }
