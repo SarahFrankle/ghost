@@ -84,6 +84,37 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+var auditReportCmd = &cobra.Command{
+	Use:   "report",
+	Short: "Summarize topic-read purpose-fit from the metrics log",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		outDir, _ := paths.Expand(cfg.Paths.OutputDir)
+		jsonlPath := filepath.Join(outDir, "metrics", "topic-reads.jsonl")
+		evs, err := effectiveness.ReadEvents(jsonlPath)
+		if err != nil {
+			return err
+		}
+		if len(evs) == 0 {
+			fmt.Println("no topic-read events yet — run `ghost audit`")
+			return nil
+		}
+		fmt.Println("Note: a topic is Read once per session and stays in context;")
+		fmt.Println("'right purpose' is judged against the load-time task only, so later")
+		fmt.Println("same-session uses are undercounted.")
+		fmt.Printf("\n%-28s %6s %8s %5s %5s %5s %5s\n", "TOPIC", "READS", "TRIG", "YES", "PART", "NO", "UNK")
+		for _, s := range effectiveness.Summarize(evs) {
+			fmt.Printf("%-28s %6d %8d %5d %5d %5d %5d\n",
+				s.Slug, s.Reads, s.TriggerMatched, s.FitYes, s.FitPartial, s.FitNo, s.FitUnknown)
+		}
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(auditCmd)
+	auditCmd.AddCommand(auditReportCmd)
 }
