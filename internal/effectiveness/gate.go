@@ -14,8 +14,16 @@ import (
 // recent user turn at/before the read through (exclusive of) the next user
 // turn. Intervening tool events are ignored for context.
 func DetectTopicReads(transcriptID string, evs []transcript.Event, topicsDir string, triggers map[string][]string) []TopicReadEvent {
+	out, _ := DetectTopicReadsWithLines(transcriptID, evs, topicsDir, triggers)
+	return out
+}
+
+// DetectTopicReadsWithLines is DetectTopicReads plus the JSONL line number each
+// returned event came from (parallel slice), so the audit can resume by line.
+func DetectTopicReadsWithLines(transcriptID string, evs []transcript.Event, topicsDir string, triggers map[string][]string) ([]TopicReadEvent, []int) {
 	prefix := strings.TrimSuffix(topicsDir, "/") + "/"
 	var out []TopicReadEvent
+	var lines []int
 	for i, ev := range evs {
 		if ev.Kind != "tool_use" || ev.Tool != "Read" {
 			continue
@@ -33,8 +41,24 @@ func DetectTopicReads(transcriptID string, evs []transcript.Event, topicsDir str
 			TriggerMatched:     triggerMatched(ctx, triggers[slug]),
 			Fit:                FitUnknown,
 		})
+		lines = append(lines, ev.Line)
 	}
-	return out
+	return out, lines
+}
+
+// NewEventsSince keeps only events whose source line is strictly greater than
+// scannedLines, and returns the max line seen (for advancing the ledger).
+func NewEventsSince(evs []TopicReadEvent, lines []int, scannedLines int) (kept []TopicReadEvent, maxLine int) {
+	maxLine = scannedLines
+	for i, e := range evs {
+		if lines[i] > maxLine {
+			maxLine = lines[i]
+		}
+		if lines[i] > scannedLines {
+			kept = append(kept, e)
+		}
+	}
+	return kept, maxLine
 }
 
 // topicSlug returns the slug for a file_path directly under prefix

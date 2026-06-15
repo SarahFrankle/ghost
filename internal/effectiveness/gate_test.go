@@ -62,3 +62,17 @@ func TestContextWindow_MultiBlockUserTurn(t *testing.T) {
 		t.Errorf("context = %q (want both blocks joined)", got[0].TaskContextExcerpt)
 	}
 }
+
+func TestNewEventsSince(t *testing.T) {
+	evs := []TopicReadEvent{
+		{TopicSlug: "a"}, {TopicSlug: "b"}, {TopicSlug: "c"},
+	}
+	lines := []int{2, 5, 9}
+	kept, maxLine := NewEventsSince(evs, lines, 5)
+	if len(kept) != 1 || kept[0].TopicSlug != "c" {
+		t.Fatalf("want only 'c' (line 9 > 5), got %+v", kept)
+	}
+	if maxLine != 9 {
+		t.Fatalf("maxLine = %d, want 9", maxLine)
+	}
+}
