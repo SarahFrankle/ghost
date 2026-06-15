@@ -255,12 +255,15 @@ Edit `~/.ghost/config.toml`. Frequently tuned knobs:
   vocabulary into themes.
 - `models.embedding` — Voyage embedding model, used only when
   `VOYAGE_API_KEY` is set (otherwise Ollama is used).
-- `thresholds.rule_min_evidence_count` — how many times a rule must
-  appear before it can be global. Default 2.
-- `thresholds.rule_min_project_count` — how many different projects.
-  Default 2.
+- `models.topic` — model for topic-body synthesis (the highest-volume
+  synth stage, one call per topic cluster). Defaults to a mid-tier
+  model; empty falls back to `models.smart`.
+- `thresholds.recurrence_for_confidence` — distinct-conversation count
+  at which a soft (non-high-confidence) preference earns confidence and
+  survives the gate. High-confidence preferences survive at any count.
+  Default 3.
 - `thresholds.cluster_cosine_identity_rule` — similarity threshold
-  for bucketing identity/rule/voice observations. Default 0.85 (tight).
+  for bucketing identity/voice observations. Default 0.85 (tight).
 - `thresholds.min_cluster_size` — how many observations a theme must
   have to become a topic; below this they are dropped as noise
   (logged). Default 3.
