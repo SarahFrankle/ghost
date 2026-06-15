@@ -216,6 +216,7 @@ func runExtract(ctx context.Context) error {
 		Log:    log.Default(),
 	}
 
+	const ledgerSaveInterval = 25
 	workers := cfg.Batching.ExtractWorkers
 	workers = max(workers, 1)
 	sem := make(chan struct{}, workers)
@@ -268,11 +269,17 @@ func runExtract(ctx context.Context) error {
 				ObservationsFile: obsRelPath,
 				MessageCount:     len(result.Observations),
 			})
-			if err := l.Save(ledgerPath); err != nil {
-				log.Printf("ledger save after %s: %v", j.c.ID, err)
-			}
 			processed++
 			totalObs += len(result.Observations)
+			// Checkpoint periodically for crash-resumability instead of
+			// rewriting the whole ledger after every transcript — the latter
+			// is O(N^2) write volume serialized under mu, partly defeating the
+			// worker pool. The post-loop Save persists the final state.
+			if processed%ledgerSaveInterval == 0 {
+				if err := l.Save(ledgerPath); err != nil {
+					log.Printf("ledger checkpoint after %s: %v", j.c.ID, err)
+				}
+			}
 		}()
 	}
 	wg.Wait()

@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/SarahFrankle/ghost/internal/atomicfs"
 )
 
 const CurrentSchemaVersion = 1
@@ -57,19 +59,17 @@ func Load(path string) (*Ledger, error) {
 	return l, nil
 }
 
-// Save atomically writes the ledger to path.
+// Save atomically writes the ledger to path. It marshals under the lock,
+// then writes via atomicfs (a randomly-named temp + rename) so two
+// concurrent Save calls cannot collide on a shared temp filename.
 func (l *Ledger) Save(path string) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	b, err := json.MarshalIndent(l, "", "  ")
+	l.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfs.WriteFile(path, b, 0o644)
 }
 
 func (l *Ledger) Mark(path string, e Entry) {
