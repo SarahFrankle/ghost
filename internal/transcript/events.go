@@ -11,24 +11,13 @@ import (
 // Parse, this preserves tool calls and the JSONL line each came from, so
 // consumers can correlate a Read with the user turns surrounding it.
 type Event struct {
-	Line      int               // 1-based line number in the JSONL file
+	Line      int               // 1-based JSONL line number; multiple Events from the same line share this value.
 	Timestamp string            // top-level event timestamp, if present
 	Role      string            // user | assistant | ...
 	Kind      string            // "text" | "tool_use"
 	Text      string            // populated when Kind == "text"
 	Tool      string            // tool name when Kind == "tool_use"
 	Input     map[string]string // tool input args, string values only
-}
-
-type eventRaw struct {
-	Timestamp string `json:"timestamp"`
-	Type      string `json:"type"`
-	Role      string `json:"role"`
-	Message   struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	} `json:"message"`
-	Content json.RawMessage `json:"content"`
 }
 
 // ParseEvents reads a Claude Code transcript JSONL and returns an ordered
@@ -50,24 +39,17 @@ func ParseEvents(path string) ([]Event, error) {
 		if len(b) == 0 {
 			continue
 		}
-		var ev eventRaw
+		var ev rawEvent
 		if err := json.Unmarshal(b, &ev); err != nil {
 			continue
 		}
-		role, content := pickRoleAndContentEv(ev)
+		role, content := pickRoleAndContent(ev)
 		if role == "" || len(content) == 0 {
 			continue
 		}
 		out = append(out, blocksToEvents(content, role, ev.Timestamp, line)...)
 	}
 	return out, sc.Err()
-}
-
-func pickRoleAndContentEv(ev eventRaw) (string, json.RawMessage) {
-	if ev.Message.Role != "" {
-		return ev.Message.Role, ev.Message.Content
-	}
-	return ev.Role, ev.Content
 }
 
 // blocksToEvents turns a content field (string OR block array) into Events.

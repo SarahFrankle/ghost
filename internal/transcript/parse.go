@@ -16,9 +16,10 @@ type Turn struct {
 // rawEvent is a minimal projection over the Claude Code JSONL schema.
 // Only the fields extract needs; unknown fields are ignored.
 type rawEvent struct {
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Message struct {
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"type"`
+	Role      string `json:"role"`
+	Message   struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
