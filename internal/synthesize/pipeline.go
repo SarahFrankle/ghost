@@ -11,6 +11,7 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/cluster"
+	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
@@ -74,8 +75,8 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		return err
 	}
 
-	identityClusters := pickKind(cf.Clusters, "identity")
-	prefClusters := pickKind(cf.Clusters, "preference")
+	identityClusters := pickKind(cf.Clusters, extract.KindIdentity)
+	prefClusters := pickKind(cf.Clusters, extract.KindPreference)
 
 	genModel := p.GeneralityModel
 	if genModel == "" {
@@ -187,7 +188,7 @@ func gateByConfidence(clusters []cluster.Cluster, recurrenceForConfidence int) [
 	for _, c := range clusters {
 		high := false
 		for _, m := range c.Members {
-			if m.Confidence == "high" {
+			if m.Confidence == extract.ConfidenceHigh {
 				high = true
 				break
 			}
@@ -200,7 +201,7 @@ func gateByConfidence(clusters []cluster.Cluster, recurrenceForConfidence int) [
 	return out
 }
 
-func pickKind(cs []cluster.Cluster, kind string) []cluster.Cluster {
+func pickKind(cs []cluster.Cluster, kind extract.Kind) []cluster.Cluster {
 	out := make([]cluster.Cluster, 0, len(cs))
 	for _, c := range cs {
 		if c.Kind == kind {

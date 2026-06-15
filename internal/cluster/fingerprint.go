@@ -64,7 +64,7 @@ func observationsContentFingerprint(f extract.ObservationsFile) string {
 	obs := make([]string, 0, len(f.Observations))
 	for _, o := range f.Observations {
 		obs = append(obs, strings.Join(
-			[]string{o.Kind, o.Confidence, o.Context, o.Text, o.Evidence}, "\x1f"))
+			[]string{string(o.Kind), string(o.Confidence), o.Context, o.Text, o.Evidence}, "\x1f"))
 	}
 	sort.Strings(obs)
 	parts := make([]string, 0, len(obs)+3)

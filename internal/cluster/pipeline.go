@@ -63,7 +63,7 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 	// retired for them); identity/voice still embed + cosine-bucket.
 	var themeMembers, rest []ClusterMember
 	for _, m := range members {
-		if m.Kind == "preference" {
+		if m.Kind == extract.KindPreference {
 			themeMembers = append(themeMembers, m)
 		} else {
 			rest = append(rest, m)
@@ -162,11 +162,11 @@ func loadAllObservations(observationsDir string) ([]ClusterMember, error) {
 		}
 		for _, o := range f.Observations {
 			subKey := ""
-			if o.Kind == "voice" {
+			if o.Kind == extract.KindVoice {
 				subKey = o.Context
 			}
 			out = append(out, ClusterMember{
-				ObservationHash: embedding.ObservationHash(o.Kind, subKey, o.Text),
+				ObservationHash: embedding.ObservationHash(string(o.Kind), subKey, o.Text),
 				ConversationID:  f.Source,
 				Project:         f.Project,
 				Kind:            o.Kind,

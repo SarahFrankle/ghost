@@ -1,26 +1,30 @@
 package cluster
 
-import "time"
+import (
+	"time"
+
+	"github.com/SarahFrankle/ghost/internal/extract"
+)
 
 const SchemaVersion = 1
 
 // ClusterMember is one observation as it appears inside a cluster.
 type ClusterMember struct {
-	ObservationHash string `json:"observation_hash"`
-	ConversationID  string `json:"source"` // conversation ID; json tag kept as "source" for clusters.json compatibility
-	Project         string `json:"project"`
-	Kind            string `json:"kind"`
-	Text            string `json:"text"`
-	Evidence        string `json:"evidence"`
-	Context         string `json:"context,omitempty"`
-	Confidence      string `json:"confidence,omitempty"`
+	ObservationHash string             `json:"observation_hash"`
+	ConversationID  string             `json:"source"` // conversation ID; json tag kept as "source" for clusters.json compatibility
+	Project         string             `json:"project"`
+	Kind            extract.Kind       `json:"kind"`
+	Text            string             `json:"text"`
+	Evidence        string             `json:"evidence"`
+	Context         string             `json:"context,omitempty"`
+	Confidence      extract.Confidence `json:"confidence,omitempty"`
 }
 
 // SubKey returns the partition discriminator inside a kind.
 // voice → Context; everything else (including topic) → "". Topics are
 // pooled together and merged by embedding cosine, not by a free-text key.
 func (m ClusterMember) SubKey() string {
-	if m.Kind == "voice" {
+	if m.Kind == extract.KindVoice {
 		return m.Context
 	}
 	return ""
@@ -28,7 +32,7 @@ func (m ClusterMember) SubKey() string {
 
 // Cluster is a group of observations that describe the same thing.
 type Cluster struct {
-	Kind              string          `json:"kind"`
+	Kind              extract.Kind    `json:"kind"`
 	SubKey            string          `json:"sub_key,omitempty"`
 	Canonical         string          `json:"canonical"`
 	Members           []ClusterMember `json:"members"`

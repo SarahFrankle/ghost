@@ -50,7 +50,7 @@ func TestValidate_PreferenceKindAccepted(t *testing.T) {
 }
 
 func TestValidate_RuleAndTopicRejected(t *testing.T) {
-	for _, k := range []string{"rule", "topic"} {
+	for _, k := range []Kind{"rule", "topic"} {
 		o := Observation{Kind: k, Text: "x", Evidence: "turn 1: x"}
 		if err := o.Validate(); err == nil {
 			t.Fatalf("kind %q should no longer be valid", k)
