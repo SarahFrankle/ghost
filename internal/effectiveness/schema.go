@@ -8,10 +8,8 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/SarahFrankle/ghost/internal/atomicfs"
-	"github.com/SarahFrankle/ghost/internal/paths"
 )
 
 // Fit is the judge's purpose-fit verdict for one topic read.
@@ -41,9 +39,6 @@ type TopicReadEvent struct {
 func AppendEvents(path string, evs []TopicReadEvent) error {
 	if len(evs) == 0 {
 		return nil
-	}
-	if err := paths.EnsureDir(filepath.Dir(path)); err != nil {
-		return err
 	}
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
