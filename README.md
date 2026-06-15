@@ -144,8 +144,17 @@ ghost show observations    # print recent extracted observations (--recent N)
 ghost status               # ledger summary + last compose
 ghost add-rule "<text>"    # pin a manual rule (survives recompose)
 ghost forget <transcript>  # drop a conversation's observations + ledger entry
+ghost prune                # drop derived state for vanished/sidecar transcripts (--dry-run)
 ghost install-skill        # (re)write the lazy-loading skill
 ```
+
+`ghost prune` only touches derived state — ledger entries and
+observation files for transcripts that have been deleted, plus
+per-session sidecar files (e.g. ai-title) that earlier discovery
+ingested by mistake. It never touches your real transcripts, and is
+idempotent (a no-op on clean state). Use `--dry-run` to preview. After
+a prune that drops anything, synthesis is stale — rerun `ghost
+compose`.
 
 ## What lives where
 
