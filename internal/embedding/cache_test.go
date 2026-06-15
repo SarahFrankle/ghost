@@ -13,7 +13,7 @@ func TestCacheRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.Empty() {
+	if len(c.entries) != 0 {
 		t.Fatalf("fresh cache should be empty")
 	}
 	c.Put("hash-a", []float32{1, 2, 3})
@@ -45,7 +45,7 @@ func TestCacheModelMismatchDiscards(t *testing.T) {
 	if _, ok := c2.Get("hash-a"); ok {
 		t.Fatalf("model-id mismatch must discard cached entries")
 	}
-	if c2.Model() != "voyage-3-medium" {
+	if c2.model != "voyage-3-medium" {
 		t.Fatalf("new model not adopted")
 	}
 }

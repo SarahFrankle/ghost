@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/SarahFrankle/ghost/internal/embedding"
+	"github.com/SarahFrankle/ghost/internal/extract"
 )
 
 // Bucket partitions members by (kind, sub_key) and, within each partition,
@@ -27,7 +28,10 @@ import (
 // deterministic and trivially testable. Counts are computed here so the LLM
 // never produces a number that drives a downstream threshold.
 func Bucket(members []ClusterMember, vecOf func(i int) []float32, thresholdFor func(kind string) float32) []Cluster {
-	type key struct{ kind, sub string }
+	type key struct {
+		kind extract.Kind
+		sub  string
+	}
 	parts := map[key][]int{}
 	for i, m := range members {
 		k := key{m.Kind, m.SubKey()}
@@ -59,7 +63,7 @@ func Bucket(members []ClusterMember, vecOf func(i int) []float32, thresholdFor f
 			return members[idxs[a]].ObservationHash < members[idxs[b]].ObservationHash
 		})
 
-		threshold := thresholdFor(k.kind)
+		threshold := thresholdFor(string(k.kind))
 		var groups []*group
 		for _, i := range idxs {
 			vi := vecOf(i)

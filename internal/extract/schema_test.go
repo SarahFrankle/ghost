@@ -50,10 +50,28 @@ func TestValidate_PreferenceKindAccepted(t *testing.T) {
 }
 
 func TestValidate_RuleAndTopicRejected(t *testing.T) {
-	for _, k := range []string{"rule", "topic"} {
+	for _, k := range []Kind{"rule", "topic"} {
 		o := Observation{Kind: k, Text: "x", Evidence: "turn 1: x"}
 		if err := o.Validate(); err == nil {
 			t.Fatalf("kind %q should no longer be valid", k)
+		}
+	}
+}
+
+func TestValidate_Confidence(t *testing.T) {
+	// Empty (optional) and the three known levels are accepted.
+	for _, c := range []Confidence{"", ConfidenceHigh, ConfidenceMedium, ConfidenceLow} {
+		o := Observation{Kind: KindPreference, Confidence: c, Text: "x", Evidence: "turn 1: x"}
+		if err := o.Validate(); err != nil {
+			t.Errorf("confidence %q should be valid: %v", c, err)
+		}
+	}
+	// A malformed value is rejected rather than silently failing the
+	// downstream == ConfidenceHigh comparison.
+	for _, c := range []Confidence{"hgih", "very high", "HIGH"} {
+		o := Observation{Kind: KindPreference, Confidence: c, Text: "x", Evidence: "turn 1: x"}
+		if err := o.Validate(); err == nil {
+			t.Errorf("confidence %q should be rejected", c)
 		}
 	}
 }

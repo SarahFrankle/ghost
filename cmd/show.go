@@ -68,9 +68,9 @@ var showObservationsCmd = &cobra.Command{
 				filepath.Base(r.path), f.Project, len(f.Observations),
 				r.entry.ProcessedAt.Format(time.RFC3339))
 			for _, o := range f.Observations {
-				sub := o.Kind
+				sub := string(o.Kind)
 				if o.Context != "" {
-					sub = o.Kind + ":" + o.Context
+					sub = string(o.Kind) + ":" + o.Context
 				}
 				fmt.Printf("  [%s] %s\n      ← %s\n", sub, o.Text, o.Evidence)
 			}

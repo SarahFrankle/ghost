@@ -10,6 +10,7 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/cluster"
+	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/paths"
 	"github.com/SarahFrankle/ghost/prompts"
 )
@@ -40,7 +41,7 @@ var topicsPreviewCmd = &cobra.Command{
 		}
 		var topics []cluster.ClusterMember
 		for _, m := range all {
-			if m.Kind == "preference" {
+			if m.Kind == extract.KindPreference {
 				topics = append(topics, m)
 			}
 		}

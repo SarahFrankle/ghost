@@ -144,8 +144,17 @@ ghost show observations    # print recent extracted observations (--recent N)
 ghost status               # ledger summary + last compose
 ghost add-rule "<text>"    # pin a manual rule (survives recompose)
 ghost forget <transcript>  # drop a conversation's observations + ledger entry
+ghost prune                # drop derived state for vanished/sidecar transcripts (--dry-run)
 ghost install-skill        # (re)write the lazy-loading skill
 ```
+
+`ghost prune` only touches derived state — ledger entries and
+observation files for transcripts that have been deleted, plus
+per-session sidecar files (e.g. ai-title) that earlier discovery
+ingested by mistake. It never touches your real transcripts, and is
+idempotent (a no-op on clean state). Use `--dry-run` to preview. After
+a prune that drops anything, synthesis is stale — rerun `ghost
+compose`.
 
 ## What lives where
 
@@ -171,10 +180,13 @@ These two layers do different jobs, and the distinction matters:
   thought, not mid-sentence" governs Claude's output regardless of
   what's being written.
 
-A rule must show up in at least 2 conversations across at least 2
-different projects before it becomes a global rule. Single-project
-guidance lives in `topics/<name>.md` and loads only when you're
-working in that domain.
+A preference becomes a global rule only if ghost judges it generally
+applicable (not tied to one project or domain) and it clears a
+confidence gate: directly-asserted, high-confidence preferences
+promote even when stated once, while softer preferences must recur
+across at least `recurrence_for_confidence` distinct conversations
+(default 3). Preferences judged project- or domain-scoped live in
+`topics/<name>.md` and load only when you're working in that domain.
 
 ### Example topic file
 
@@ -206,18 +218,20 @@ Three-stage pipeline:
 
 1. **extract** — per transcript, cheap model. Pulls atomic
    observations with evidence citations.
-2. **cluster** — corpus-level, split by kind. Identity, rule, and
-   voice observations are embedded and grouped by cosine similarity
-   (a tight threshold, near-duplicate merging only). Topic
-   observations skip embeddings entirely: a cheap model labels each
-   one, a smart model consolidates the labels into a small set of
-   themes, and observations are grouped by exact theme. The theme
-   names the topic, so related preferences ("docs should lead with
-   examples" / "example-first documentation") land in one topic.
+2. **cluster** — corpus-level, split by kind. Identity and voice
+   observations are embedded and grouped by cosine similarity (a tight
+   threshold, near-duplicate merging only). Preference observations
+   skip embeddings entirely: a cheap model labels each one, a smart
+   model consolidates the labels into a small set of themes, and
+   observations are grouped by exact theme. The theme names the topic,
+   so related preferences ("docs should lead with examples" /
+   "example-first documentation") land together.
 3. **synthesize** — corpus-level, smart model. Writes
    `identity.md`, `rules.md`, `index.md`, and `topics/*.md` from the
-   clusters. Rules are filtered to those appearing in at least 2
-   conversations across at least 2 projects.
+   clusters. Preference clusters are routed general-vs-scoped: general
+   ones that clear the confidence gate (high-confidence, or recurring
+   across enough distinct conversations) become `rules.md`; scoped
+   ones become `topics/*.md`.
 
 Observations are an immutable, append-only log keyed by content hash.
 The files in `~/.ghost/` are a regenerable materialized view. You can
@@ -250,12 +264,15 @@ Edit `~/.ghost/config.toml`. Frequently tuned knobs:
   vocabulary into themes.
 - `models.embedding` — Voyage embedding model, used only when
   `VOYAGE_API_KEY` is set (otherwise Ollama is used).
-- `thresholds.rule_min_evidence_count` — how many times a rule must
-  appear before it can be global. Default 2.
-- `thresholds.rule_min_project_count` — how many different projects.
-  Default 2.
+- `models.topic` — model for topic-body synthesis (the highest-volume
+  synth stage, one call per topic cluster). Defaults to a mid-tier
+  model; empty falls back to `models.smart`.
+- `thresholds.recurrence_for_confidence` — distinct-conversation count
+  at which a soft (non-high-confidence) preference earns confidence and
+  survives the gate. High-confidence preferences survive at any count.
+  Default 3.
 - `thresholds.cluster_cosine_identity_rule` — similarity threshold
-  for bucketing identity/rule/voice observations. Default 0.85 (tight).
+  for bucketing identity/voice observations. Default 0.85 (tight).
 - `thresholds.min_cluster_size` — how many observations a theme must
   have to become a topic; below this they are dropped as noise
   (logged). Default 3.

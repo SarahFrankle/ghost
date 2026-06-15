@@ -8,12 +8,13 @@ import (
 
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/cluster"
+	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
 func hasHighConfidenceMember(c cluster.Cluster) bool {
 	for _, m := range c.Members {
-		if m.Confidence == "high" {
+		if m.Confidence == extract.ConfidenceHigh {
 			return true
 		}
 	}

@@ -4,8 +4,9 @@ behave: defaults, prohibitions, preferences that recur across the
 user's projects.
 
 Your input is:
-- A list of rule clusters that survived the
-  evidence-count and project-count thresholds.
+- A list of rule clusters: preferences judged generally applicable
+  that cleared the confidence gate (high-confidence, or recurring
+  across enough distinct conversations).
 - The current `rules.user.md` contents, which are user-authored and
   AUTHORITATIVE. Your synthesized rules MUST NOT contradict
   rules.user.md. If a cluster would produce a rule that conflicts
