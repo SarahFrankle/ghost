@@ -203,3 +203,13 @@ This repo so far should be considered a POC. DO NOT assume that because a patter
   consolidates labels into themes (two-pass identify→map), and observations
   group by exact theme. The theme names the topic (deterministic slug, no
   collision class). On the real corpus: 199 topic obs → 17 themes, 0 dropped.
+
+## Effectiveness audit — deferred
+
+Built 2026-06-15 — `ghost audit` / `ghost audit report`, package `internal/effectiveness`. Measures whether ghost topic files are loaded for the right purpose, from the transcripts ghost already ingests. Deferred items below, each with a build trigger:
+
+- **Ollama-routed judge.** Would cut judge token cost to zero. **Trigger:** local generation is wired into ghost (today LLM access is `claude -p` only).
+- **Content-usefulness signal** — whether Claude actually applied the guidance, not just loaded it. **Trigger:** purpose-fit data proves insufficient to explain mismatches.
+- **Same-session reuse credit.** The current `% right-purpose` metric judges only the load-time task, undercounting later same-session uses of an already-loaded topic. **Trigger:** the undercount materially distorts a topic's rating.
+- **Read-frequency / "all three layered" view** (reads + purpose + usefulness as stages). **Trigger:** demand for the reads and usefulness layers alongside purpose.
+- **Broader synthetic-turn filtering.** The audit's context window skips ghost-skill body injections (`Base directory for this skill:`) to recover the real user request, but other synthetic user turns (command output, system reminders) are not yet filtered. **Trigger:** they materially pollute task context for the judge.
