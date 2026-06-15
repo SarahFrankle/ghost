@@ -9,10 +9,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/effectiveness"
 	"github.com/SarahFrankle/ghost/internal/paths"
 	"github.com/SarahFrankle/ghost/internal/source"
 	"github.com/SarahFrankle/ghost/internal/transcript"
+	"github.com/SarahFrankle/ghost/prompts"
 )
 
 var auditCmd = &cobra.Command{
@@ -46,6 +48,18 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	judgeModel := cfg.Models.Judge
+	if judgeModel == "" {
+		judgeModel = cfg.Models.Cheap
+	}
+	client, err := anthropic.New()
+	if err != nil {
+		return err
+	}
+	judge := effectiveness.NewJudge(client, judgeModel,
+		prompts.EffectivenessJudgeSystem(), prompts.EffectivenessJudgeSystemHash(),
+		filepath.Join(metricsDir, "judge-cache.json"))
+
 	glob, err := paths.Expand(cfg.Paths.TranscriptsGlob)
 	if err != nil {
 		return err
@@ -69,6 +83,12 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		}
 		reads, lines := effectiveness.DetectTopicReadsWithLines(c.ID, evs, topicsDir, triggers)
 		kept, maxLine := effectiveness.NewEventsSince(reads, lines, led.ScannedLines(c.ID))
+		for idx := range kept {
+			body := topicBody(topicsDir, kept[idx].TopicSlug)
+			fit, reason, _ := judge.Judge(ctx, kept[idx], body)
+			kept[idx].Fit = fit
+			kept[idx].FitReason = reason
+		}
 		if len(kept) > 0 {
 			if err := effectiveness.AppendEvents(jsonlPath, kept); err != nil {
 				return err
@@ -80,8 +100,21 @@ func runAudit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if err := judge.SaveCache(); err != nil {
+		return err
+	}
 	fmt.Printf("appended %d new topic-read events to %s\n", total, jsonlPath)
 	return nil
+}
+
+// topicBody reads a topic file's content, or "" if unreadable (e.g. the topic
+// was renamed/removed since the read). An empty body still gets judged on slug.
+func topicBody(topicsDir, slug string) string {
+	b, err := os.ReadFile(filepath.Join(topicsDir, slug+".md"))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 var auditReportCmd = &cobra.Command{

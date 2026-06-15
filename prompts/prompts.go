@@ -76,3 +76,10 @@ var clusterThemeMapSystem string
 // labels onto the fixed theme set produced by pass 1.
 func ClusterThemeMapSystem() string     { return clusterThemeMapSystem }
 func ClusterThemeMapSystemHash() string { return hashOf(clusterThemeMapSystem) }
+
+//go:embed effectiveness.judge.system.md
+var effectivenessJudgeSystem string
+
+// EffectivenessJudgeSystem returns the prompt for the audit purpose-fit judge.
+func EffectivenessJudgeSystem() string     { return effectivenessJudgeSystem }
+func EffectivenessJudgeSystemHash() string { return hashOf(effectivenessJudgeSystem) }
