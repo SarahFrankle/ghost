@@ -47,9 +47,21 @@ var validKinds = map[Kind]bool{
 	KindIdentity: true, KindPreference: true, KindVoice: true,
 }
 
+// validConfidences is the closed set Validate accepts. The empty string is
+// allowed because confidence is optional (omitempty); a non-empty value the
+// model did not emit cleanly (a typo or unexpected phrasing) is rejected here
+// rather than silently failing the downstream == ConfidenceHigh comparison,
+// which would demote a preference that should have promoted.
+var validConfidences = map[Confidence]bool{
+	"": true, ConfidenceHigh: true, ConfidenceMedium: true, ConfidenceLow: true,
+}
+
 func (o Observation) Validate() error {
 	if !validKinds[o.Kind] {
 		return fmt.Errorf("invalid kind %q", o.Kind)
+	}
+	if !validConfidences[o.Confidence] {
+		return fmt.Errorf("invalid confidence %q", o.Confidence)
 	}
 	if o.Text == "" {
 		return errors.New("text required")
