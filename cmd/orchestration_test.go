@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,11 +44,7 @@ func TestObservationsStale(t *testing.T) {
 	)
 	rel := filepath.Join(".state/observations", "real.json")
 	write := func(fp string) {
-		f := extract.ObservationsFile{Source: src, Project: proj, Fingerprint: fp}
-		b, _ := json.MarshalIndent(f, "", "  ")
-		if err := os.WriteFile(filepath.Join(out, rel), b, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeObsFile(t, filepath.Join(out, rel), extract.ObservationsFile{Source: src, Project: proj, Fingerprint: fp})
 	}
 
 	l := ledger.New()

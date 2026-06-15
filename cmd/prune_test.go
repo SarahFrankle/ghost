@@ -10,14 +10,22 @@ import (
 	"github.com/SarahFrankle/ghost/internal/ledger"
 )
 
+// writeObsFile marshals f and writes it to path, failing the test on error.
+func writeObsFile(t *testing.T, path string, f extract.ObservationsFile) {
+	t.Helper()
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // writeObs writes an observations file under obsDir and returns its base name.
 func writeObs(t *testing.T, obsDir, name, source string) string {
 	t.Helper()
-	f := extract.ObservationsFile{Source: source, Observations: []extract.Observation{}}
-	b, _ := json.MarshalIndent(f, "", "  ")
-	if err := os.WriteFile(filepath.Join(obsDir, name), b, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeObsFile(t, filepath.Join(obsDir, name), extract.ObservationsFile{Source: source, Observations: []extract.Observation{}})
 	return name
 }
 
