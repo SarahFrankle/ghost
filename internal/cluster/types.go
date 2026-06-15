@@ -21,8 +21,8 @@ type ClusterMember struct {
 }
 
 // SubKey returns the partition discriminator inside a kind.
-// voice → Context; everything else (including topic) → "". Topics are
-// pooled together and merged by embedding cosine, not by a free-text key.
+// voice → Context; everything else → "". Only voice observations are
+// partitioned by a free-text key; the rest pool together within their kind.
 func (m ClusterMember) SubKey() string {
 	if m.Kind == extract.KindVoice {
 		return m.Context
