@@ -72,6 +72,7 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	}
 
 	total := 0
+	bodyCache := map[string]string{}
 	counter := stderrCounter("scanning")
 	for i, c := range convs {
 		if counter != nil {
@@ -81,10 +82,15 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			continue
 		}
-		reads, lines := effectiveness.DetectTopicReadsWithLines(c.ID, evs, topicsDir, triggers)
-		kept, maxLine := effectiveness.NewEventsSince(reads, lines, led.ScannedLines(c.ID))
+		reads := effectiveness.DetectTopicReads(c.ID, evs, topicsDir, triggers)
+		kept, maxLine := effectiveness.NewEventsSince(reads, led.ScannedLines(c.ID))
 		for idx := range kept {
-			body := topicBody(topicsDir, kept[idx].TopicSlug)
+			slug := kept[idx].TopicSlug
+			body, ok := bodyCache[slug]
+			if !ok {
+				body = topicBody(topicsDir, slug)
+				bodyCache[slug] = body
+			}
 			fit, reason, _ := judge.Judge(ctx, kept[idx], body)
 			kept[idx].Fit = fit
 			kept[idx].FitReason = reason

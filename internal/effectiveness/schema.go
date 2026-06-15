@@ -24,8 +24,10 @@ const (
 
 // TopicReadEvent is one detected Read of a ~/.ghost/topics/*.md file.
 type TopicReadEvent struct {
-	Timestamp          string `json:"ts"`
-	TranscriptID       string `json:"transcript_id"`
+	Timestamp    string `json:"ts"`
+	TranscriptID string `json:"transcript_id"`
+	// Line is the 1-based JSONL line the Read came from; used for resume, not persisted.
+	Line               int    `json:"-"`
 	TopicSlug          string `json:"topic_slug"`
 	TaskContextExcerpt string `json:"task_context_excerpt"`
 	TriggerMatched     bool   `json:"trigger_matched"`

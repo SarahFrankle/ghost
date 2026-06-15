@@ -14,16 +14,8 @@ import (
 // recent user turn at/before the read through (exclusive of) the next user
 // turn. Intervening tool events are ignored for context.
 func DetectTopicReads(transcriptID string, evs []transcript.Event, topicsDir string, triggers map[string][]string) []TopicReadEvent {
-	out, _ := DetectTopicReadsWithLines(transcriptID, evs, topicsDir, triggers)
-	return out
-}
-
-// DetectTopicReadsWithLines is DetectTopicReads plus the JSONL line number each
-// returned event came from (parallel slice), so the audit can resume by line.
-func DetectTopicReadsWithLines(transcriptID string, evs []transcript.Event, topicsDir string, triggers map[string][]string) ([]TopicReadEvent, []int) {
 	prefix := strings.TrimSuffix(topicsDir, "/") + "/"
 	var out []TopicReadEvent
-	var lines []int
 	for i, ev := range evs {
 		if ev.Kind != "tool_use" || ev.Tool != "Read" {
 			continue
@@ -36,25 +28,25 @@ func DetectTopicReadsWithLines(transcriptID string, evs []transcript.Event, topi
 		out = append(out, TopicReadEvent{
 			Timestamp:          ctxTS,
 			TranscriptID:       transcriptID,
+			Line:               ev.Line,
 			TopicSlug:          slug,
 			TaskContextExcerpt: ctx,
 			TriggerMatched:     triggerMatched(ctx, triggers[slug]),
 			Fit:                FitUnknown,
 		})
-		lines = append(lines, ev.Line)
 	}
-	return out, lines
+	return out
 }
 
 // NewEventsSince keeps only events whose source line is strictly greater than
 // scannedLines, and returns the max line seen (for advancing the ledger).
-func NewEventsSince(evs []TopicReadEvent, lines []int, scannedLines int) (kept []TopicReadEvent, maxLine int) {
+func NewEventsSince(evs []TopicReadEvent, scannedLines int) (kept []TopicReadEvent, maxLine int) {
 	maxLine = scannedLines
-	for i, e := range evs {
-		if lines[i] > maxLine {
-			maxLine = lines[i]
+	for _, e := range evs {
+		if e.Line > maxLine {
+			maxLine = e.Line
 		}
-		if lines[i] > scannedLines {
+		if e.Line > scannedLines {
 			kept = append(kept, e)
 		}
 	}

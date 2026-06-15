@@ -89,10 +89,9 @@ func TestContextWindow_SkipsSkillInjection(t *testing.T) {
 
 func TestNewEventsSince(t *testing.T) {
 	evs := []TopicReadEvent{
-		{TopicSlug: "a"}, {TopicSlug: "b"}, {TopicSlug: "c"},
+		{TopicSlug: "a", Line: 2}, {TopicSlug: "b", Line: 5}, {TopicSlug: "c", Line: 9},
 	}
-	lines := []int{2, 5, 9}
-	kept, maxLine := NewEventsSince(evs, lines, 5)
+	kept, maxLine := NewEventsSince(evs, 5)
 	if len(kept) != 1 || kept[0].TopicSlug != "c" {
 		t.Fatalf("want only 'c' (line 9 > 5), got %+v", kept)
 	}
