@@ -95,6 +95,10 @@ func runAudit(cmd *cobra.Command, args []string) error {
 			}
 			total += len(kept)
 		}
+		// Append-then-advance: events are durably written before the ledger
+		// cursor moves. A crash in between re-scans this transcript next run and
+		// re-appends its tail — at-least-once, not exactly-once. The judge cache
+		// prevents re-spend; the report tolerates duplicate lines.
 		led.SetScannedLines(c.ID, maxLine)
 		if err := led.Save(ledgerPath); err != nil {
 			return err
@@ -125,7 +129,10 @@ var auditReportCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		outDir, _ := paths.Expand(cfg.Paths.OutputDir)
+		outDir, err := paths.Expand(cfg.Paths.OutputDir)
+		if err != nil {
+			return err
+		}
 		jsonlPath := filepath.Join(outDir, "metrics", "topic-reads.jsonl")
 		evs, err := effectiveness.ReadEvents(jsonlPath)
 		if err != nil {
