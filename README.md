@@ -209,14 +209,14 @@ Three-stage pipeline:
 
 1. **extract** — per transcript, cheap model. Pulls atomic
    observations with evidence citations.
-2. **cluster** — corpus-level, split by kind. Identity, rule, and
-   voice observations are embedded and grouped by cosine similarity
-   (a tight threshold, near-duplicate merging only). Topic
-   observations skip embeddings entirely: a cheap model labels each
-   one, a smart model consolidates the labels into a small set of
-   themes, and observations are grouped by exact theme. The theme
-   names the topic, so related preferences ("docs should lead with
-   examples" / "example-first documentation") land in one topic.
+2. **cluster** — corpus-level, split by kind. Identity and voice
+   observations are embedded and grouped by cosine similarity (a tight
+   threshold, near-duplicate merging only). Preference observations
+   skip embeddings entirely: a cheap model labels each one, a smart
+   model consolidates the labels into a small set of themes, and
+   observations are grouped by exact theme. The theme names the topic,
+   so related preferences ("docs should lead with examples" /
+   "example-first documentation") land together.
 3. **synthesize** — corpus-level, smart model. Writes
    `identity.md`, `rules.md`, `index.md`, and `topics/*.md` from the
    clusters. Preference clusters are routed general-vs-scoped: general
