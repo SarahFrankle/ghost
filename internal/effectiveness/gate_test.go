@@ -63,6 +63,30 @@ func TestContextWindow_MultiBlockUserTurn(t *testing.T) {
 	}
 }
 
+func TestContextWindow_SkipsSkillInjection(t *testing.T) {
+	topicsDir := "/Users/sarah/.ghost/topics"
+	evs := []transcript.Event{
+		{Line: 1, Timestamp: "T0", Role: "user", Kind: "text", Text: "help me debug this crash"},
+		{Line: 2, Role: "assistant", Kind: "text", Text: "I'll investigate"},
+		{Line: 3, Role: "assistant", Kind: "tool_use", Tool: "Skill", Input: map[string]string{}},
+		{Line: 4, Role: "user", Kind: "text", Text: "Base directory for this skill: /Users/sarah/.claude/skills/ghost\n# Ghost. Lazy-load topic guidance"},
+		{Line: 5, Role: "assistant", Kind: "tool_use", Tool: "Read", Input: map[string]string{"file_path": topicsDir + "/debugging-and-troubleshooting.md"}},
+	}
+	got := DetectTopicReads("c", evs, topicsDir, map[string][]string{"debugging-and-troubleshooting": {"debug"}})
+	if len(got) != 1 {
+		t.Fatalf("want 1, got %d", len(got))
+	}
+	if got[0].TaskContextExcerpt != "help me debug this crash" {
+		t.Errorf("context = %q (want the real user request, not the skill body)", got[0].TaskContextExcerpt)
+	}
+	if !got[0].TriggerMatched {
+		t.Errorf("trigger should match 'debug' in the real request")
+	}
+	if got[0].Timestamp != "T0" {
+		t.Errorf("ts=%q want T0", got[0].Timestamp)
+	}
+}
+
 func TestNewEventsSince(t *testing.T) {
 	evs := []TopicReadEvent{
 		{TopicSlug: "a"}, {TopicSlug: "b"}, {TopicSlug: "c"},

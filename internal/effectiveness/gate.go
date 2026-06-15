@@ -74,17 +74,27 @@ func topicSlug(fp, prefix string) (string, bool) {
 	return strings.TrimSuffix(rest, ".md"), true
 }
 
+// isSkillInjection reports whether a user-role text turn is actually Claude
+// Code injecting an invoked skill's body (not the user's task). Such turns
+// open with this fixed preamble.
+func isSkillInjection(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "Base directory for this skill:")
+}
+
 // contextWindow gathers all contiguous user-text events of the bounding user
-// turn at or before readIdx. It walks backward to find the first user-text
-// event, then forward collecting consecutive user-text events, stopping at the
-// first event that is not a user-text event (the assistant turn ends the user
-// turn). Returns the joined text and the timestamp of the first event found.
+// turn at or before readIdx. It walks backward to find the first genuine
+// user-text event, then forward collecting consecutive user-text events,
+// stopping at the first event that is not a user-text event (the assistant
+// turn ends the user turn). Skill-injection turns (the skill body Claude Code
+// injects as a user-role message) are skipped so the genuine user request is
+// captured instead. Returns the joined text and the timestamp of the first
+// event found.
 func contextWindow(evs []transcript.Event, readIdx int) (string, string) {
-	// Walk backward to find the most recent user-text event, then continue
-	// backward to find the start of that contiguous user-text block.
+	// Walk backward to find the most recent genuine user-text event, then
+	// continue backward to find the start of that contiguous user-text block.
 	start := -1
 	for j := readIdx; j >= 0; j-- {
-		if evs[j].Kind == "text" && evs[j].Role == "user" {
+		if evs[j].Kind == "text" && evs[j].Role == "user" && !isSkillInjection(evs[j].Text) {
 			start = j
 			break
 		}
@@ -93,13 +103,13 @@ func contextWindow(evs []transcript.Event, readIdx int) (string, string) {
 		return "", ""
 	}
 	// Extend start backward through any additional contiguous user-text events.
-	for start > 0 && evs[start-1].Role == "user" && evs[start-1].Kind == "text" {
+	for start > 0 && evs[start-1].Role == "user" && evs[start-1].Kind == "text" && !isSkillInjection(evs[start-1].Text) {
 		start--
 	}
 	ts := evs[start].Timestamp
 	var parts []string
 	for j := start; j < len(evs); j++ {
-		if evs[j].Role == "user" && evs[j].Kind == "text" {
+		if evs[j].Role == "user" && evs[j].Kind == "text" && !isSkillInjection(evs[j].Text) {
 			parts = append(parts, evs[j].Text)
 			continue
 		}
