@@ -62,9 +62,11 @@ func (j *Judge) Judge(ctx context.Context, ev TopicReadEvent, topicBody string) 
 		return FitUnknown, "", nil
 	}
 	fit, reason := parseFitLine(strings.TrimSpace(out))
-	j.mu.Lock()
-	j.cache[k] = cachedVerdict{Fit: fit, Reason: reason}
-	j.mu.Unlock()
+	if fit != FitUnknown {
+		j.mu.Lock()
+		j.cache[k] = cachedVerdict{Fit: fit, Reason: reason}
+		j.mu.Unlock()
+	}
 	return fit, reason, nil
 }
 
@@ -80,21 +82,23 @@ func (j *Judge) SaveCache() error {
 
 var fitRe = regexp.MustCompile(`(?i)^FIT:\s*(yes|partial|no)\s*[—-]\s*(.*)$`)
 
-// parseFitLine parses "FIT: <yes|partial|no> — <reason>". Unrecognized input
-// yields FitUnknown, "".
-func parseFitLine(line string) (Fit, string) {
-	m := fitRe.FindStringSubmatch(strings.TrimSpace(line))
-	if m == nil {
-		return FitUnknown, ""
-	}
-	reason := strings.TrimSpace(m[2])
-	switch strings.ToLower(m[1]) {
-	case "yes":
-		return FitYes, reason
-	case "partial":
-		return FitPartial, reason
-	case "no":
-		return FitNo, reason
+// parseFitLine scans each line of output for the first line matching the FIT
+// pattern. Unrecognized input (no matching line) yields FitUnknown, "".
+func parseFitLine(output string) (Fit, string) {
+	for line := range strings.SplitSeq(output, "\n") {
+		m := fitRe.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		reason := strings.TrimSpace(m[2])
+		switch strings.ToLower(m[1]) {
+		case "yes":
+			return FitYes, reason
+		case "partial":
+			return FitPartial, reason
+		case "no":
+			return FitNo, reason
+		}
 	}
 	return FitUnknown, ""
 }
