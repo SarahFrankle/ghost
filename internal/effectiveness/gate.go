@@ -73,6 +73,12 @@ func isSkillInjection(text string) bool {
 	return strings.HasPrefix(strings.TrimSpace(text), "Base directory for this skill:")
 }
 
+// isUserText reports whether ev is a genuine user task turn: user-role text
+// that is not a Claude Code skill-body injection.
+func isUserText(ev transcript.Event) bool {
+	return ev.Role == "user" && ev.Kind == "text" && !isSkillInjection(ev.Text)
+}
+
 // contextWindow gathers all contiguous user-text events of the bounding user
 // turn at or before readIdx. It walks backward to find the first genuine
 // user-text event, then forward collecting consecutive user-text events,
@@ -86,7 +92,7 @@ func contextWindow(evs []transcript.Event, readIdx int) (string, string) {
 	// continue backward to find the start of that contiguous user-text block.
 	start := -1
 	for j := readIdx; j >= 0; j-- {
-		if evs[j].Kind == "text" && evs[j].Role == "user" && !isSkillInjection(evs[j].Text) {
+		if isUserText(evs[j]) {
 			start = j
 			break
 		}
@@ -95,17 +101,16 @@ func contextWindow(evs []transcript.Event, readIdx int) (string, string) {
 		return "", ""
 	}
 	// Extend start backward through any additional contiguous user-text events.
-	for start > 0 && evs[start-1].Role == "user" && evs[start-1].Kind == "text" && !isSkillInjection(evs[start-1].Text) {
+	for start > 0 && isUserText(evs[start-1]) {
 		start--
 	}
 	ts := evs[start].Timestamp
 	var parts []string
 	for j := start; j < len(evs); j++ {
-		if evs[j].Role == "user" && evs[j].Kind == "text" && !isSkillInjection(evs[j].Text) {
-			parts = append(parts, evs[j].Text)
-			continue
+		if !isUserText(evs[j]) {
+			break // first non-(user text) event ends the user turn
 		}
-		break // first non-(user text) event ends the user turn
+		parts = append(parts, evs[j].Text)
 	}
 	return strings.Join(parts, "\n"), ts
 }
