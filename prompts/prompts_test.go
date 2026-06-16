@@ -21,4 +21,7 @@ func TestClusterPromptsNonEmpty(t *testing.T) {
 	if ClusterThemeMapSystem() == "" || ClusterThemeMapSystemHash() == "" {
 		t.Fatal("theme map prompt or hash empty")
 	}
+	if EffectivenessJudgeSystem() == "" || EffectivenessJudgeSystemHash() == "" {
+		t.Fatal("effectiveness judge prompt or hash empty")
+	}
 }

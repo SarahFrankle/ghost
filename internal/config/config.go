@@ -23,6 +23,9 @@ type Models struct {
 	// Empty falls back to Smart.
 	Theme     string `toml:"theme"`
 	Embedding string `toml:"embedding"`
+	// Judge is the model for the effectiveness purpose-fit judge (one call per
+	// uncached topic-read event, cheap classification). Empty falls back to Cheap.
+	Judge string `toml:"judge"`
 }
 
 type Thresholds struct {
