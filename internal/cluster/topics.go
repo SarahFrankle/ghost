@@ -418,6 +418,7 @@ func (g *TopicGrouper) themeMapping(ctx context.Context, uniqueLabels []string) 
 		return nil, fmt.Errorf("identify: no themes returned")
 	}
 	g.logf("cluster: topics: identified %d theme(s) from %d label(s)", len(themes), len(uniqueLabels))
+	themes = unionThemes(themes, g.SeedNames)
 
 	mapping := make(map[string]string, len(uniqueLabels))
 	unmapped := uniqueLabels
@@ -457,6 +458,27 @@ func (g *TopicGrouper) themeMapping(ctx context.Context, uniqueLabels []string) 
 		}
 	}
 	return mapping, nil
+}
+
+// unionThemes returns discovered themes plus any seed names not already present
+// (case-insensitive). On overlap the discovered spelling is kept (it is already
+// in the set); seed names contribute only previously-absent candidates. The
+// result is deterministic: discovered order preserved, new seed names appended
+// in sorted order.
+func unionThemes(discovered, seedNames []string) []string {
+	have := make(map[string]struct{}, len(discovered))
+	for _, d := range discovered {
+		have[strings.ToLower(d)] = struct{}{}
+	}
+	var extra []string
+	for _, s := range seedNames {
+		if _, ok := have[strings.ToLower(s)]; !ok {
+			have[strings.ToLower(s)] = struct{}{}
+			extra = append(extra, s)
+		}
+	}
+	sort.Strings(extra)
+	return append(append([]string(nil), discovered...), extra...)
 }
 
 // mapBatches maps labels onto themes in parallel batches of themeBatchSize. A

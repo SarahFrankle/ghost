@@ -328,6 +328,38 @@ func TestThemeMappingSelfMapsStragglers(t *testing.T) {
 	}
 }
 
+func TestThemeMappingUnionsSeedIntoCandidates(t *testing.T) {
+	var gotThemes []string
+	g := &TopicGrouper{
+		ThemeIdentify: func(_ context.Context, _ []string) ([]string, error) {
+			return []string{"testing-discipline"}, nil
+		},
+		ThemeMap: func(_ context.Context, themes, labels []string) (map[string]string, error) {
+			gotThemes = themes
+			m := map[string]string{}
+			for _, l := range labels {
+				m[l] = "testing-discipline"
+			}
+			return m, nil
+		},
+		SeedNames: []string{"pr-creation", "testing-discipline"},
+		Workers:   1,
+	}
+	if _, err := g.themeMapping(context.Background(), []string{"writes tests"}); err != nil {
+		t.Fatal(err)
+	}
+	// discovered ∪ seed, deduped: testing-discipline once, pr-creation added.
+	want := map[string]bool{"testing-discipline": true, "pr-creation": true}
+	if len(gotThemes) != len(want) {
+		t.Fatalf("candidate themes=%v want keys %v", gotThemes, want)
+	}
+	for _, th := range gotThemes {
+		if !want[th] {
+			t.Fatalf("unexpected candidate theme %q", th)
+		}
+	}
+}
+
 func TestThemeMappingErrorsOnNoThemes(t *testing.T) {
 	identify := func(_ context.Context, _ []string) ([]string, error) { return nil, nil }
 	mapper := func(_ context.Context, _ []string, _ []string) (map[string]string, error) { return nil, nil }
