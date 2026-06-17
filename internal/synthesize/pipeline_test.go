@@ -164,6 +164,8 @@ func TestPipelineWritesTopicsSubdir(t *testing.T) {
 		switch {
 		case strings.HasPrefix(user, "THEMES"):
 			return `{"verdicts":[{"label":"topic-canon","general":false}]}`, nil
+		case strings.HasPrefix(user, "TOPICS:"):
+			return `{"categories":{"topic-canon":"General"}}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "id-canon"):
@@ -203,6 +205,8 @@ func TestPipelineRespectsTopicCap(t *testing.T) {
 		switch {
 		case strings.HasPrefix(user, "THEMES"):
 			return `{"verdicts":[{"label":"alpha-topic","general":false},{"label":"beta-topic","general":false}]}`, nil
+		case strings.HasPrefix(user, "TOPICS:"):
+			return `{"categories":{"alpha-topic":"General","beta-topic":"General"}}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "alpha-topic"):
@@ -259,6 +263,8 @@ func TestPipelineDistinctTopicsBothSurvive(t *testing.T) {
 		switch {
 		case strings.HasPrefix(user, "THEMES"):
 			return `{"verdicts":[{"label":"first-canon","general":false},{"label":"second-canon","general":false}]}`, nil
+		case strings.HasPrefix(user, "TOPICS:"):
+			return `{"categories":{"first-canon":"General","second-canon":"General"}}`, nil
 		case strings.HasPrefix(user, "RANKED TOPICS"):
 			return "# Index\n", nil
 		case strings.Contains(user, "ident-canon"):

@@ -502,6 +502,24 @@ func runSynthesize(ctx context.Context) error {
 		return nil
 	}
 
+	sd, _, seedErr := seed.Load(filepath.Join(outDir, "seed-topics.yml"))
+	if seedErr != nil {
+		log.Printf("synthesize: seed load failed (%v); no pinned categories", seedErr)
+		sd = seed.Seed{}
+	}
+	pinned := map[string]string{}
+	for _, tp := range sd.Flatten() {
+		if tp.Parent == "" {
+			continue
+		}
+		slug, err := synthesize.Slug(tp.Name)
+		if err != nil {
+			log.Printf("synthesize: seed topic %q does not slugify (%v); not pinning", tp.Name, err)
+			continue
+		}
+		pinned[slug] = tp.Parent
+	}
+
 	client, err := anthropic.New()
 	if err != nil {
 		return err
@@ -518,6 +536,10 @@ func runSynthesize(ctx context.Context) error {
 		Workers:                 cfg.Batching.SynthWorkers,
 		Log:                     log.Printf,
 		Progress:                stderrCounter("synthesize: topics"),
+		CategorizeModel:         cfg.Models.Smart,
+		CategorizeCachePath:     filepath.Join(stateDir, "categories.json"),
+		CategorizePromptHash:    prompts.SynthesizeCategorizeSystemHash(),
+		PinnedCategories:        pinned,
 	}
 	if err := p.Run(ctx, cf); err != nil {
 		return err
@@ -559,13 +581,13 @@ func stderrCounter(label string) func(done, total int) {
 // synthesizeFingerprint composes the cache key for synthesize outputs.
 // Inputs: the clusters.json fingerprint (which already captures observation
 // state, embedding model, and the per-kind cosine thresholds), the smart and
-// topic models, the five synth prompts (including generality routing), and the
-// structural thresholds that change which clusters survive to be rendered. The
-// "synthesize/v3" namespace guarantees stale v2 caches miss on the first run
-// after the generality-routing redesign.
+// topic models, the six synth prompts (including generality routing and
+// categorization), and the structural thresholds that change which clusters
+// survive to be rendered. The "synthesize/v4" namespace guarantees stale v3
+// caches miss on the first run after the categorization wiring.
 func synthesizeFingerprint(clustersFP, smartModel, topicModel string, recurrenceForConfidence, maxTopicEntries int) string {
 	return fingerprint.Compute(
-		"synthesize/v3",
+		"synthesize/v4",
 		clustersFP,
 		smartModel,
 		topicModel,
@@ -574,6 +596,7 @@ func synthesizeFingerprint(clustersFP, smartModel, topicModel string, recurrence
 		prompts.SynthesizeTopicsSystemHash(),
 		prompts.SynthesizeIndexSystemHash(),
 		prompts.SynthesizeGeneralitySystemHash(),
+		prompts.SynthesizeCategorizeSystemHash(),
 		fmt.Sprintf("recurrence_for_confidence=%d", recurrenceForConfidence),
 		fmt.Sprintf("max_topics=%d", maxTopicEntries),
 	)

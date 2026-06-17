@@ -55,6 +55,14 @@ type Pipeline struct {
 	// running count, for an in-place counter. The caller owns rendering
 	// (rewriting line on a TTY, nothing when output is not a terminal).
 	Progress func(done, total int)
+	// CategorizeModel categorizes the final topic set for index grouping.
+	// Empty falls back to SmartModel.
+	CategorizeModel      string
+	CategorizeCachePath  string
+	CategorizePromptHash string
+	// PinnedCategories maps a slug to a user-pinned category (seed categories
+	// section). These pass through categorization verbatim.
+	PinnedCategories map[string]string
 }
 
 func (p *Pipeline) logf(format string, args ...any) {
@@ -131,8 +139,19 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 			results = append(results, f)
 		}
 	}
+	catModel := p.CategorizeModel
+	if catModel == "" {
+		catModel = p.SmartModel
+	}
+	categories, catErr := Categorize(ctx, p.Client, catModel, capped, p.PinnedCategories, p.CategorizeCachePath, p.CategorizePromptHash)
+	if catErr != nil {
+		// Loading depends on the per-topic trigger lines, not category
+		// headers, so a flat index is a safe degradation rather than a failure.
+		p.logf("synthesize: categorize failed (%v); rendering flat index", catErr)
+		categories = nil
+	}
 	p.logf("synthesize: index.md (%d topic(s))", len(capped))
-	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped, nil))
+	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped, categories))
 
 	// Collect any errors from identity/rules/index. Topic errors were
 	// returned above.
