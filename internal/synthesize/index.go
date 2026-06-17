@@ -72,9 +72,12 @@ func Cap(topics []TopicResult, max int, logf func(string, ...any)) []TopicResult
 	return topics[:max]
 }
 
-// BuildIndex asks the smart model to emit index.md from a ranked list
-// of TopicResult. Topics must already be ranked + capped by the caller.
-func BuildIndex(ctx context.Context, client anthropic.Client, model string, topics []TopicResult) FileResult {
+// BuildIndex asks the smart model to emit index.md from a ranked list of
+// TopicResult. Topics must already be ranked + capped by the caller. When
+// categories is non-empty, each topic carries its category so the model can
+// group under ### subheadings; when nil/empty (categorization failed) the
+// index is rendered flat.
+func BuildIndex(ctx context.Context, client anthropic.Client, model string, topics []TopicResult, categories map[string]string) FileResult {
 	if len(topics) == 0 {
 		return FileResult{Name: "index.md", Content: "# Index\n\nNo lazy-loaded topics yet.\n"}
 	}
@@ -82,6 +85,9 @@ func BuildIndex(ctx context.Context, client anthropic.Client, model string, topi
 	b.WriteString("RANKED TOPICS (highest evidence first):\n")
 	for _, t := range topics {
 		fmt.Fprintf(&b, "- slug=%s file=topics/%s.md evidence=%d title=%q\n", t.Slug, t.Slug, t.EvidenceTotal, t.Title)
+		if cat := categories[t.Slug]; cat != "" {
+			fmt.Fprintf(&b, "    category: %s\n", cat)
+		}
 		if t.Cluster.Canonical != "" {
 			fmt.Fprintf(&b, "    canonical: %s\n", t.Cluster.Canonical)
 		}

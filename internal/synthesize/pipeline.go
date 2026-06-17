@@ -132,7 +132,7 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		}
 	}
 	p.logf("synthesize: index.md (%d topic(s))", len(capped))
-	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped))
+	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped, nil))
 
 	// Collect any errors from identity/rules/index. Topic errors were
 	// returned above.
