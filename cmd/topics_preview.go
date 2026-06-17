@@ -11,9 +11,7 @@ import (
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/internal/extract"
-	"github.com/SarahFrankle/ghost/internal/fingerprint"
 	"github.com/SarahFrankle/ghost/internal/paths"
-	"github.com/SarahFrankle/ghost/internal/seed"
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
@@ -68,17 +66,9 @@ var topicsPreviewCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		seedPath := filepath.Join(outDir, "seed-topics.yml")
-		sd, seedWarns, seedErr := seed.Load(seedPath)
-		if seedErr != nil {
-			log.Printf("topics-preview: seed load failed (%v); proceeding with no seed anchoring", seedErr)
-			sd = seed.Seed{}
-		}
-		for _, w := range seedWarns {
-			log.Printf("topics-preview: %s", w)
-		}
+		sd := loadSeed(outDir, "topics-preview")
 		seedNames := sd.Names()
-		seedHash := fingerprint.Compute(append([]string{"seed/v1"}, seedNames...)...)
+		seedHash := sd.Hash()
 		g := &cluster.TopicGrouper{
 			Label:                   cluster.NewLabelFunc(client, labelModel),
 			ThemeIdentify:           cluster.NewThemeIdentifyFunc(client, themeModel, seedNames),

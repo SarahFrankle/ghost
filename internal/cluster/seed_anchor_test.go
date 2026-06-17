@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -96,15 +97,8 @@ func TestSeedAnchoringStableAndUnforced(t *testing.T) {
 	}
 
 	// (b) Canonical set is byte-identical across both runs (stability).
-	for k := range canonA {
-		if !canonB[k] {
-			t.Fatalf("canonical %q not stable across runs; run1=%v run2=%v", k, canonicalNames(a), canonicalNames(b))
-		}
-	}
-	for k := range canonB {
-		if !canonA[k] {
-			t.Fatalf("canonical %q appeared in run2 but not run1; run1=%v run2=%v", k, canonicalNames(a), canonicalNames(b))
-		}
+	if !reflect.DeepEqual(canonA, canonB) {
+		t.Fatalf("canonical set not stable across runs; run1=%v run2=%v", canonicalNames(a), canonicalNames(b))
 	}
 
 	// (d) single-member "test first" label maps to "testing-discipline", which has

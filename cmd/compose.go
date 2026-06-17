@@ -327,6 +327,20 @@ func observationsFileName(contentHash string) string {
 	return trimmed + "-" + hex.EncodeToString(sum[:4])
 }
 
+// loadSeed reads the seed file from outDir, draining any warnings to the log
+// under label, and returns an empty Seed (no anchoring) on any load error.
+func loadSeed(outDir, label string) seed.Seed {
+	sd, warns, err := seed.Load(filepath.Join(outDir, "seed-topics.yml"))
+	if err != nil {
+		log.Printf("%s: seed load failed (%v); proceeding with no seed anchoring", label, err)
+		return seed.Seed{}
+	}
+	for _, w := range warns {
+		log.Printf("%s: %s", label, w)
+	}
+	return sd
+}
+
 func runCluster(ctx context.Context) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -358,17 +372,9 @@ func runCluster(ctx context.Context) error {
 	if themeModel == "" {
 		themeModel = cfg.Models.Smart
 	}
-	seedPath := filepath.Join(outDir, "seed-topics.yml")
-	sd, seedWarns, seedErr := seed.Load(seedPath)
-	if seedErr != nil {
-		log.Printf("cluster: seed load failed (%v); proceeding with no seed anchoring", seedErr)
-		sd = seed.Seed{}
-	}
-	for _, w := range seedWarns {
-		log.Printf("cluster: %s", w)
-	}
+	sd := loadSeed(outDir, "cluster")
 	seedNames := sd.Names()
-	seedHash := fingerprint.Compute(append([]string{"seed/v1"}, seedNames...)...)
+	seedHash := sd.Hash()
 
 	expectedFP := cluster.ClustersFingerprint(
 		obsFingerprints,
@@ -502,11 +508,7 @@ func runSynthesize(ctx context.Context) error {
 		return nil
 	}
 
-	sd, _, seedErr := seed.Load(filepath.Join(outDir, "seed-topics.yml"))
-	if seedErr != nil {
-		log.Printf("synthesize: seed load failed (%v); no pinned categories", seedErr)
-		sd = seed.Seed{}
-	}
+	sd := loadSeed(outDir, "synthesize")
 	pinned := map[string]string{}
 	for _, tp := range sd.Flatten() {
 		if tp.Parent == "" {

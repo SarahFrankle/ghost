@@ -12,6 +12,8 @@ import (
 	"sort"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/SarahFrankle/ghost/internal/fingerprint"
 )
 
 // Seed is the parsed seed file.
@@ -99,6 +101,12 @@ func (s Seed) Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Hash returns a content fingerprint of the seed's leaf names.
+// It is mixed into the cluster fingerprints so editing the seed re-runs the theme step.
+func (s Seed) Hash() string {
+	return fingerprint.Compute(append([]string{"seed/v1"}, s.Names()...)...)
 }
 
 // Flatten returns every leaf as a Topic, sorted by name.
