@@ -151,6 +151,7 @@ func (p *Pipeline) Run(ctx context.Context, cf cluster.ClustersFile) error {
 		categories = nil
 	}
 	p.logf("synthesize: index.md (%d topic(s))", len(capped))
+	// Index prose render always uses SmartModel; catModel may be cheaper but is only for the categorize pass.
 	results = append(results, BuildIndex(ctx, p.Client, p.SmartModel, capped, categories))
 
 	// Collect any errors from identity/rules/index. Topic errors were

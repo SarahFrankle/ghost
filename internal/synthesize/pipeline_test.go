@@ -301,6 +301,51 @@ func TestPipelineDistinctTopicsBothSurvive(t *testing.T) {
 	}
 }
 
+// TestPipelineCategorizeFailureFallsBackToFlatIndex verifies that a Categorize
+// LLM error is non-fatal: the pipeline must still succeed and write index.md,
+// and the index user-prompt must contain no "category:" lines (proving flat render).
+func TestPipelineCategorizeFailureFallsBackToFlatIndex(t *testing.T) {
+	dir := t.TempDir()
+	var indexUserPrompt string
+	client := &funcClient{fn: func(user string) (string, error) {
+		switch {
+		case strings.HasPrefix(user, "THEMES"):
+			return `{"verdicts":[{"label":"topic-canon","general":false}]}`, nil
+		case strings.HasPrefix(user, "TOPICS:"):
+			// Simulates a categorize LLM failure.
+			return "", fmt.Errorf("categorize: forced LLM error")
+		case strings.HasPrefix(user, "RANKED TOPICS"):
+			// Capture the index user prompt so we can assert it has no category: lines.
+			indexUserPrompt = user
+			return "# Index\n", nil
+		case strings.Contains(user, "id-canon"):
+			return "# Identity\n\nbody.\n", nil
+		case strings.Contains(user, "topic-canon"):
+			return "- body\n", nil
+		}
+		return "", fmt.Errorf("unexpected payload: %q", user)
+	}}
+	p := &Pipeline{
+		Client: client, SmartModel: "smart", GhostDir: dir,
+		VerdictsPath: filepath.Join(dir, "verdicts.json"),
+	}
+	cf := cluster.ClustersFile{Clusters: []cluster.Cluster{
+		{Kind: "identity", Canonical: "id-canon", EvidenceCount: 2, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "id-canon", Evidence: "t", Project: "p"}}},
+		{Kind: "preference", Canonical: "topic-canon", EvidenceCount: 3, ProjectCount: 2,
+			Members: []cluster.ClusterMember{{Text: "topic-canon", Evidence: "t", Project: "p", Confidence: "high"}}},
+	}}
+	if err := p.Run(context.Background(), cf); err != nil {
+		t.Fatalf("expected no error on categorize failure (flat fallback), got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "index.md")); err != nil {
+		t.Fatalf("index.md must be written even when Categorize fails: %v", err)
+	}
+	if strings.Contains(indexUserPrompt, "category:") {
+		t.Fatalf("flat-index prompt must not contain 'category:' lines; got prompt: %q", indexUserPrompt)
+	}
+}
+
 func TestPipelineTopicSynthFailurePreservesPriorTopics(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "topics"), 0o755); err != nil {
