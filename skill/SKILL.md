@@ -16,6 +16,8 @@ files under `~/.ghost/topics/`.
    topic entry.
 3. If a topic entry matches, Read `~/.ghost/topics/<slug>.md`
    before writing code or answering.
+   If a listed topic file is missing, skip that entry silently and load the rest — a missing
+   file means the taxonomy was regenerated; it is not an error.
 4. If nothing matches, proceed without loading anything.
 
 A file loaded once per session stays in context. Do not re-Read
