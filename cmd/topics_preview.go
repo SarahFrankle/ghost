@@ -11,7 +11,9 @@ import (
 	"github.com/SarahFrankle/ghost/internal/anthropic"
 	"github.com/SarahFrankle/ghost/internal/cluster"
 	"github.com/SarahFrankle/ghost/internal/extract"
+	"github.com/SarahFrankle/ghost/internal/fingerprint"
 	"github.com/SarahFrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/seed"
 	"github.com/SarahFrankle/ghost/prompts"
 )
 
@@ -66,9 +68,20 @@ var topicsPreviewCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		seedPath := filepath.Join(outDir, "seed-topics.yml")
+		sd, seedWarns, seedErr := seed.Load(seedPath)
+		if seedErr != nil {
+			log.Printf("topics-preview: seed load failed (%v); proceeding with no seed anchoring", seedErr)
+			sd = seed.Seed{}
+		}
+		for _, w := range seedWarns {
+			log.Printf("topics-preview: %s", w)
+		}
+		seedNames := sd.Names()
+		seedHash := fingerprint.Compute(append([]string{"seed/v1"}, seedNames...)...)
 		g := &cluster.TopicGrouper{
 			Label:                   cluster.NewLabelFunc(client, labelModel),
-			ThemeIdentify:           cluster.NewThemeIdentifyFunc(client, themeModel),
+			ThemeIdentify:           cluster.NewThemeIdentifyFunc(client, themeModel, seedNames),
 			ThemeMap:                cluster.NewThemeMapFunc(client, themeModel),
 			Cache:                   labelCache,
 			CacheSavePath:           filepath.Join(stateDir, "labels.json"),
@@ -80,6 +93,8 @@ var topicsPreviewCmd = &cobra.Command{
 			Workers:                 cfg.Batching.ExtractWorkers,
 			Log:                     log.Printf,
 			Progress:                stderrCounter("cluster: topics: completed"),
+			SeedNames:               seedNames,
+			SeedHash:                seedHash,
 		}
 
 		clusters, err := g.Run(cmd.Context(), topics)

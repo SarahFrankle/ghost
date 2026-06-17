@@ -25,6 +25,7 @@ import (
 	"github.com/SarahFrankle/ghost/internal/fingerprint"
 	"github.com/SarahFrankle/ghost/internal/ledger"
 	"github.com/SarahFrankle/ghost/internal/paths"
+	"github.com/SarahFrankle/ghost/internal/seed"
 	"github.com/SarahFrankle/ghost/internal/source"
 	"github.com/SarahFrankle/ghost/internal/synthesize"
 	"github.com/SarahFrankle/ghost/prompts"
@@ -357,6 +358,18 @@ func runCluster(ctx context.Context) error {
 	if themeModel == "" {
 		themeModel = cfg.Models.Smart
 	}
+	seedPath := filepath.Join(outDir, "seed-topics.yml")
+	sd, seedWarns, seedErr := seed.Load(seedPath)
+	if seedErr != nil {
+		log.Printf("cluster: seed load failed (%v); proceeding with no seed anchoring", seedErr)
+		sd = seed.Seed{}
+	}
+	for _, w := range seedWarns {
+		log.Printf("cluster: %s", w)
+	}
+	seedNames := sd.Names()
+	seedHash := fingerprint.Compute(append([]string{"seed/v1"}, seedNames...)...)
+
 	expectedFP := cluster.ClustersFingerprint(
 		obsFingerprints,
 		embModelForFP,
@@ -367,6 +380,7 @@ func runCluster(ctx context.Context) error {
 		prompts.ClusterThemeIdentifySystemHash(),
 		prompts.ClusterThemeMapSystemHash(),
 		cfg.Thresholds.MinClusterSize,
+		seedHash,
 	)
 	if !composeRecluster {
 		if existing, err := cluster.LoadClusters(clustersPath); err == nil && existing.Fingerprint == expectedFP {
@@ -392,7 +406,7 @@ func runCluster(ctx context.Context) error {
 	}
 	grouper := &cluster.TopicGrouper{
 		Label:                   cluster.NewLabelFunc(client, labelModel),
-		ThemeIdentify:           cluster.NewThemeIdentifyFunc(client, themeModel),
+		ThemeIdentify:           cluster.NewThemeIdentifyFunc(client, themeModel, seedNames),
 		ThemeMap:                cluster.NewThemeMapFunc(client, themeModel),
 		Cache:                   labelCache,
 		CacheSavePath:           filepath.Join(stateDir, "labels.json"),
@@ -404,6 +418,8 @@ func runCluster(ctx context.Context) error {
 		Workers:                 cfg.Batching.ExtractWorkers,
 		Log:                     log.Printf,
 		Progress:                stderrCounter("cluster: topics: completed"),
+		SeedNames:               seedNames,
+		SeedHash:                seedHash,
 	}
 
 	p := &cluster.Pipeline{

@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -201,8 +202,50 @@ func (f fakeClient) Complete(_ context.Context, _, _, _ string) (string, error) 
 	return f.reply, nil
 }
 
+// fakeClientFunc implements anthropic.Client by calling a provided function,
+// allowing tests to capture call arguments.
+type fakeClientFunc struct {
+	complete func(ctx context.Context, model, system, user string) (string, error)
+}
+
+func (f *fakeClientFunc) Complete(ctx context.Context, model, system, user string) (string, error) {
+	return f.complete(ctx, model, system, user)
+}
+
+func TestNewThemeIdentifyInjectsSeedGuidance(t *testing.T) {
+	var gotUser string
+	client := &fakeClientFunc{complete: func(_ context.Context, _, _, user string) (string, error) {
+		gotUser = user
+		return "THEME: testing-discipline\n", nil
+	}}
+	fn := NewThemeIdentifyFunc(client, "m", []string{"pr-creation", "pr-reviewing"})
+	if _, err := fn(context.Background(), []string{"writes tests first"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pr-creation", "pr-reviewing"} {
+		if !strings.Contains(gotUser, name) {
+			t.Fatalf("seed name %q not injected into prompt:\n%s", name, gotUser)
+		}
+	}
+}
+
+func TestNewThemeIdentifyNoSeedNoGuidance(t *testing.T) {
+	var gotUser string
+	client := &fakeClientFunc{complete: func(_ context.Context, _, _, user string) (string, error) {
+		gotUser = user
+		return "THEME: x\n", nil
+	}}
+	fn := NewThemeIdentifyFunc(client, "m", nil)
+	if _, err := fn(context.Background(), []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(gotUser), "user wants these distinctions") {
+		t.Fatalf("no seed should mean no guidance block:\n%s", gotUser)
+	}
+}
+
 func TestNewThemeIdentifyFuncParsesThemeLines(t *testing.T) {
-	f := NewThemeIdentifyFunc(fakeClient{reply: "THEME: Git Workflow\n- THEME: Documentation\nnoise line\n"}, "sonnet")
+	f := NewThemeIdentifyFunc(fakeClient{reply: "THEME: Git Workflow\n- THEME: Documentation\nnoise line\n"}, "sonnet", nil)
 	themes, err := f(context.Background(), []string{"a"})
 	if err != nil {
 		t.Fatal(err)

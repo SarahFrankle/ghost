@@ -121,6 +121,14 @@ type TopicGrouper struct {
 	MinClusterSize          int
 	Workers                 int
 	Log                     func(format string, args ...any)
+	// SeedNames are the user-curated leaf topic names.
+	// Injected as Pass-1 guidance and unioned into the Pass-2 candidate set so a seeded topic with
+	// evidence gets a verbatim-stable slug.
+	// Empty = no anchoring.
+	SeedNames []string
+	// SeedHash is the content hash of the seed, mixed into ThemesFingerprint so
+	// editing the seed re-runs the theme step.
+	SeedHash string
 	// Progress, if non-nil, is called once per newly-labeled observation with
 	// the running count and the new-observation total, mirroring synthesize's
 	// topic progress. Cached observations are not counted.
@@ -260,9 +268,16 @@ func NewLabelFunc(client anthropic.Client, model string) LabelFunc {
 
 // NewThemeIdentifyFunc adapts the client into a ThemeIdentifyFunc (theme pass
 // 1). It sends the full label list and parses the "THEME: <name>" lines.
-func NewThemeIdentifyFunc(client anthropic.Client, model string) ThemeIdentifyFunc {
+// seedNames, if non-empty, are injected as Pass-1 guidance so the model keeps those
+// distinctions separate and names them as given.
+func NewThemeIdentifyFunc(client anthropic.Client, model string, seedNames []string) ThemeIdentifyFunc {
 	return func(ctx context.Context, labels []string) ([]string, error) {
 		var b strings.Builder
+		if len(seedNames) > 0 {
+			b.WriteString("The user wants these distinctions kept separate and named exactly as given: ")
+			b.WriteString(strings.Join(seedNames, ", "))
+			b.WriteString(".\nHonor them when the data supports such a theme; never merge across them; never force unrelated labels into them; discover all other themes naturally.\n\n")
+		}
 		b.WriteString("LABELS:\n")
 		for _, l := range labels {
 			b.WriteString("- ")
@@ -388,7 +403,7 @@ func parseThemeMapping(raw string) (map[string]string, error) {
 // progress (or the round cap) self-maps the stragglers so every label is
 // always covered. Cached by fingerprint in themes.json.
 func (g *TopicGrouper) themeMapping(ctx context.Context, uniqueLabels []string) (map[string]string, error) {
-	fp := ThemesFingerprint(uniqueLabels, g.ThemeModel, g.ThemeIdentifyPromptHash, g.ThemeMapPromptHash)
+	fp := ThemesFingerprint(uniqueLabels, g.ThemeModel, g.ThemeIdentifyPromptHash, g.ThemeMapPromptHash, g.SeedHash)
 	if g.ThemesPath != "" {
 		if tf, err := LoadThemes(g.ThemesPath); err == nil && tf.Fingerprint == fp && tf.Mapping != nil {
 			return tf.Mapping, nil

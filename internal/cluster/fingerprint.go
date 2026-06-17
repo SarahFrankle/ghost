@@ -77,17 +77,18 @@ func observationsContentFingerprint(f extract.ObservationsFile) string {
 // voice still cluster by cosine (identityRuleThreshold); topics now go through
 // label→theme→group, so the topic-path inputs join the key: label model + label
 // prompt hash, theme model + the two theme-pass prompt hashes (identify + map),
-// and minClusterSize. The "cluster/v4" namespace ensures pre-redesign clusters
-// (cosine-for-topics) definitionally miss and are recomputed.
-func ClustersFingerprint(obsFingerprints []string, embeddingModel string, identityRuleThreshold float32, labelModel, labelPromptHash, themeModel, themeIdentifyPromptHash, themeMapPromptHash string, minClusterSize int) string {
-	parts := make([]string, 0, len(obsFingerprints)+9)
-	parts = append(parts, "cluster/v4", embeddingModel,
+// minClusterSize, and seedHash. The "cluster/v5" namespace ensures pre-seed clusters
+// definitionally miss and are recomputed when the seed dimension is first added.
+func ClustersFingerprint(obsFingerprints []string, embeddingModel string, identityRuleThreshold float32, labelModel, labelPromptHash, themeModel, themeIdentifyPromptHash, themeMapPromptHash string, minClusterSize int, seedHash string) string {
+	parts := make([]string, 0, len(obsFingerprints)+10)
+	parts = append(parts, "cluster/v5", embeddingModel,
 		fmt.Sprintf("identity_rule=%g", identityRuleThreshold),
 		"label_model="+labelModel, "label_prompt="+labelPromptHash,
 		"theme_model="+themeModel,
 		"theme_identify_prompt="+themeIdentifyPromptHash,
 		"theme_map_prompt="+themeMapPromptHash,
-		fmt.Sprintf("min_cluster=%d", minClusterSize))
+		fmt.Sprintf("min_cluster=%d", minClusterSize),
+		"seed="+seedHash)
 	parts = append(parts, obsFingerprints...)
 	return fingerprint.Compute(parts...)
 }
