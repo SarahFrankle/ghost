@@ -9,12 +9,16 @@ import (
 )
 
 type fakeClient struct {
-	gotUser string
-	resp    string
+	gotUser  string
+	resp     string
+	complete func(ctx context.Context, model, system, user string) (string, error)
 }
 
 func (f *fakeClient) Complete(ctx context.Context, model, system, user string) (string, error) {
 	f.gotUser = user
+	if f.complete != nil {
+		return f.complete(ctx, model, system, user)
+	}
 	return f.resp, nil
 }
 
