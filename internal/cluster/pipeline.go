@@ -37,6 +37,10 @@ type Pipeline struct {
 	// so subsequent runs can detect input/threshold/model changes without
 	// rebuilding.
 	Fingerprint string
+	// ExtraMembers are injected into the member set after loading the
+	// observations dir — used for user-authored seed observations that do not
+	// live in observationsDir. nil in tests that don't need them.
+	ExtraMembers []ClusterMember
 }
 
 func (p *Pipeline) logf(format string, args ...any) {
@@ -50,6 +54,7 @@ func (p *Pipeline) Run(ctx context.Context, observationsDir string) error {
 	if err != nil {
 		return fmt.Errorf("load observations: %w", err)
 	}
+	members = append(members, p.ExtraMembers...)
 	if len(members) == 0 {
 		return SaveClusters(p.ClustersPath, ClustersFile{
 			SchemaVersion:    SchemaVersion,
@@ -138,6 +143,30 @@ func LoadObservations(observationsDir string) ([]ClusterMember, error) {
 	return loadAllObservations(observationsDir)
 }
 
+// MembersFromObservations maps one observations file to ClusterMembers,
+// computing each member's stable observation hash. Shared by loadAllObservations
+// (extracted files) and callers injecting user-authored seed observations.
+func MembersFromObservations(f extract.ObservationsFile) []ClusterMember {
+	out := make([]ClusterMember, 0, len(f.Observations))
+	for _, o := range f.Observations {
+		subKey := ""
+		if o.Kind == extract.KindVoice {
+			subKey = o.Context
+		}
+		out = append(out, ClusterMember{
+			ObservationHash: embedding.ObservationHash(string(o.Kind), subKey, o.Text),
+			ConversationID:  f.Source,
+			Project:         f.Project,
+			Kind:            o.Kind,
+			Text:            o.Text,
+			Evidence:        o.Evidence,
+			Context:         o.Context,
+			Confidence:      o.Confidence,
+		})
+	}
+	return out
+}
+
 // loadAllObservations walks observationsDir for *.json files, decodes
 // each as an extract.ObservationsFile, and flattens into a slice of
 // ClusterMember with stable observation hashes.
@@ -160,22 +189,7 @@ func loadAllObservations(observationsDir string) ([]ClusterMember, error) {
 		if err := json.Unmarshal(b, &f); err != nil {
 			return nil, fmt.Errorf("decode %s: %w", e.Name(), err)
 		}
-		for _, o := range f.Observations {
-			subKey := ""
-			if o.Kind == extract.KindVoice {
-				subKey = o.Context
-			}
-			out = append(out, ClusterMember{
-				ObservationHash: embedding.ObservationHash(string(o.Kind), subKey, o.Text),
-				ConversationID:  f.Source,
-				Project:         f.Project,
-				Kind:            o.Kind,
-				Text:            o.Text,
-				Evidence:        o.Evidence,
-				Context:         o.Context,
-				Confidence:      o.Confidence,
-			})
-		}
+		out = append(out, MembersFromObservations(f)...)
 	}
 	return out, nil
 }

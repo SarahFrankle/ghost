@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/SarahFrankle/ghost/internal/embedding"
+	"github.com/SarahFrankle/ghost/internal/extract"
 )
 
 type fakeEmbedder struct{}
@@ -211,6 +212,68 @@ func TestPipeline_RoutesPreferenceToGrouper(t *testing.T) {
 	}
 	if prefCount != 1 {
 		t.Fatalf("preference clusters = %d, want 1", prefCount)
+	}
+}
+
+func TestMembersFromObservationsMapsFields(t *testing.T) {
+	f := extract.ObservationsFile{
+		Source:  "seed",
+		Project: "user-seed",
+		Observations: []extract.Observation{
+			{Kind: extract.KindIdentity, Text: "Jira: SF-1234", Evidence: "user", Confidence: extract.ConfidenceHigh},
+		},
+	}
+	got := MembersFromObservations(f)
+	if len(got) != 1 {
+		t.Fatalf("want 1 member, got %d", len(got))
+	}
+	m := got[0]
+	if m.Kind != extract.KindIdentity || m.Text != "Jira: SF-1234" || m.ConversationID != "seed" || m.Project != "user-seed" {
+		t.Fatalf("unexpected member: %+v", m)
+	}
+	if m.ObservationHash == "" {
+		t.Fatal("observation hash must be set")
+	}
+}
+
+func TestPipelineIncludesExtraMembers(t *testing.T) {
+	stateDir := t.TempDir()
+	obsDir := t.TempDir() // empty observations dir
+	cache, _ := loadCacheForTest(t, stateDir, "test-emb")
+	p := &Pipeline{
+		Embedder:       fakeEmbedder{},
+		EmbeddingModel: "test-emb",
+		Cache:          cache,
+		CacheSavePath:  filepath.Join(stateDir, "embeddings.json"),
+		ClustersPath:   filepath.Join(stateDir, "clusters.json"),
+		ThresholdFor:   func(string) float32 { return 0.85 },
+		Workers:        2,
+	}
+	p.ExtraMembers = []ClusterMember{{
+		ObservationHash: "h1",
+		ConversationID:  "seed",
+		Kind:            extract.KindIdentity,
+		Text:            "Jira: SF-1234",
+		Evidence:        "user",
+		Confidence:      extract.ConfidenceHigh,
+	}}
+	if err := p.Run(context.Background(), obsDir); err != nil {
+		t.Fatal(err)
+	}
+	cf, err := LoadClusters(p.ClustersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range cf.Clusters {
+		for _, m := range c.Members {
+			if m.Text == "Jira: SF-1234" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ExtraMembers identity observation missing from clusters")
 	}
 }
 
