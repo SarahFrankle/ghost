@@ -18,9 +18,12 @@ Hard rules:
   first line of body content.
 - The body is markdown only.
 - One bullet per durable preference. Imperative voice. No hedging.
-- Group related bullets under level-2 subheadings (`## ...`) only
-  if there are at least three bullets that share a subtheme.
-  Otherwise keep it flat.
+  Every line of guidance is a `- ` bullet; never emit a preference as
+  a bare paragraph.
+- Group related bullets under level-2 subheadings (`## ...`) when at
+  least three share a subtheme. Collect any remaining bullets under a
+  final `## Other` heading. If no subtheme reaches three bullets, emit
+  the whole body as a flat `- ` bullet list with no headings at all.
 - Do not invent guidance absent from the cluster. Do not paraphrase
   away the user's specificity.
 - No em-dashes. No throat-clearing. Delete sentences you wouldn't

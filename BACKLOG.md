@@ -204,6 +204,15 @@ This repo so far should be considered a POC. DO NOT assume that because a patter
   group by exact theme. The theme names the topic (deterministic slug, no
   collision class). On the real corpus: 199 topic obs → 17 themes, 0 dropped.
 
+## Embedder preflight check — deferred
+
+When `ollama serve` is down, `ghost compose` runs the full extract stage (many
+`claude -p` calls, ~minutes + token cost) before `internal/cluster` hits
+connection-refused on `localhost:11434` and aborts. A one-line preflight that
+pings the embedder endpoint at the start of `compose` and errors with "start
+ollama" would fail fast before extract burns work. **Trigger:** this bites
+often enough to be worth the guard (observed once, 2026-06-19).
+
 ## Effectiveness audit — deferred
 
 Built 2026-06-15 — `ghost audit` / `ghost audit report`, package `internal/effectiveness`. Measures whether ghost topic files are loaded for the right purpose, from the transcripts ghost already ingests. Deferred items below, each with a build trigger:
@@ -215,3 +224,34 @@ Built 2026-06-15 — `ghost audit` / `ghost audit report`, package `internal/eff
 - **Broader synthetic-turn filtering.** The audit's context window skips ghost-skill body injections (`Base directory for this skill:`) to recover the real user request, but other synthetic user turns (command output, system reminders) are not yet filtered. **Trigger:** they materially pollute task context for the judge.
 - **Batch the metrics append.** `AppendEvents` rewrites the whole `topic-reads.jsonl` atomically on every call, and `ghost audit` calls it per transcript inside the scan loop — O(N²) I/O on the metrics file as it grows. Fine at current corpus scale. **Trigger:** `topic-reads.jsonl` grows large enough that audit runtime is dominated by metrics I/O; fix by accumulating events and appending once after the loop.
 - **Seed-aware cap exemption (granularity redesign).** `Cap`/`RankByEvidence` currently pin only high-confidence topics. An evidenced-but-low-confidence *seeded* topic could in principle be truncated by the ~120 cap. Deferred per design spec (`docs/superpowers/specs/2026-06-16-granularity-redesign-design.md`, Component 5): needs a "seeded" flag threaded Pass-2 → `cluster.Cluster` → `TopicResult` → `Rank`/`Cap`. **Trigger:** a real compose run is observed dropping an evidenced seed topic in favor of discovered noise.
+
+## Deterministic auto topic-loading (UserPromptSubmit hook) — DEFERRED (2026-06-25)
+
+The read skill (lazy topic loading via SKILL.md prose) is non-deterministic — it
+fires only when Claude chooses to invoke it. The `ghost remember` PR removes that
+prose (skill becomes write-only), so until a replacement ships, topics do not
+auto-load. Replacement design captured in
+`docs/superpowers/specs/2026-06-25-auto-topic-loading-design.md`: a
+`UserPromptSubmit` hook matching prompts against `index.md` triggers (keyword
+first; local-Ollama embedding matcher as a later upgrade). **Trigger:** the
+interim no-auto-load gap is felt, or the remember PR merges and the read side
+should be restored properly. Embedding matcher: only when the keyword hook
+observably misses relevant topics.
+
+## Split fat multi-concern topics into single-concern files — DEFERRED (2026-06-25)
+
+The granularity redesign made small/medium topics single-concern and added
+within-file `## ` subheadings, but the largest topics stayed multi-concern:
+post-compose, `process-discipline-and-execution-rigor.md` (65 bullets, 9
+subheadings) and `documentation-writing-and-maintenance.md` (68 bullets, 8
+subheadings) each load ~7KB on one trigger. Their subheadings are effectively
+standalone topics (e.g. process-discipline bundles Scoping / Approval gates /
+Minimal complexity / Investigation-before-design / Correctness). The redesign
+added hierarchy *inside* a file but never promotes subheadings *out* when a
+topic grows. Fix: when a topic exceeds a size threshold (rough start: >40
+bullets or >6 subheadings), split its subheadings into their own topic files
+and let the index category group them. Needs its own heuristic + a stable-slug
+rule so re-splits don't churn fingerprints. **Trigger:** a fat topic's size
+observably degrades load quality (irrelevant guidance dragged in on a narrow
+trigger), or topic count is low enough that splitting won't approach the ~120
+cap.
