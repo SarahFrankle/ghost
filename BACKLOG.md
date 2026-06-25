@@ -206,12 +206,9 @@ This repo so far should be considered a POC. DO NOT assume that because a patter
 
 ## Embedder preflight check — deferred
 
-When `ollama serve` is down, `ghost compose` runs the full extract stage (many
-`claude -p` calls, ~minutes + token cost) before `internal/cluster` hits
-connection-refused on `localhost:11434` and aborts. A one-line preflight that
-pings the embedder endpoint at the start of `compose` and errors with "start
-ollama" would fail fast before extract burns work. **Trigger:** this bites
-often enough to be worth the guard (observed once, 2026-06-19).
+When `ollama serve` is down, `ghost compose` runs the full extract stage (many `claude -p` calls, ~minutes + token cost) before `internal/cluster` hits connection-refused on `localhost:11434` and aborts.
+A one-line preflight that pings the embedder endpoint at the start of `compose` and errors with "start ollama" would fail fast before extract burns work.
+**Trigger:** this bites often enough to be worth the guard (observed once, 2026-06-19).
 
 ## Effectiveness audit — deferred
 
@@ -227,31 +224,17 @@ Built 2026-06-15 — `ghost audit` / `ghost audit report`, package `internal/eff
 
 ## Deterministic auto topic-loading (UserPromptSubmit hook) — DEFERRED (2026-06-25)
 
-The read skill (lazy topic loading via SKILL.md prose) is non-deterministic — it
-fires only when Claude chooses to invoke it. The `ghost remember` PR removes that
-prose (skill becomes write-only), so until a replacement ships, topics do not
-auto-load. Replacement design captured in
-`docs/superpowers/specs/2026-06-25-auto-topic-loading-design.md`: a
-`UserPromptSubmit` hook matching prompts against `index.md` triggers (keyword
-first; local-Ollama embedding matcher as a later upgrade). **Trigger:** the
-interim no-auto-load gap is felt, or the remember PR merges and the read side
-should be restored properly. Embedding matcher: only when the keyword hook
-observably misses relevant topics.
+The read skill (lazy topic loading via SKILL.md prose) is non-deterministic — it fires only when Claude chooses to invoke it.
+The `ghost remember` PR removes that prose (skill becomes write-only), so until a replacement ships, topics do not auto-load.
+Replacement design captured in `docs/superpowers/specs/2026-06-25-auto-topic-loading-design.md`: a `UserPromptSubmit` hook matching prompts against `index.md` triggers (keyword first; local-Ollama embedding matcher as a later upgrade).
+**Trigger:** the interim no-auto-load gap is felt, or the remember PR merges and the read side should be restored properly.
+Embedding matcher: only when the keyword hook observably misses relevant topics.
 
 ## Split fat multi-concern topics into single-concern files — DEFERRED (2026-06-25)
 
-The granularity redesign made small/medium topics single-concern and added
-within-file `## ` subheadings, but the largest topics stayed multi-concern:
-post-compose, `process-discipline-and-execution-rigor.md` (65 bullets, 9
-subheadings) and `documentation-writing-and-maintenance.md` (68 bullets, 8
-subheadings) each load ~7KB on one trigger. Their subheadings are effectively
-standalone topics (e.g. process-discipline bundles Scoping / Approval gates /
-Minimal complexity / Investigation-before-design / Correctness). The redesign
-added hierarchy *inside* a file but never promotes subheadings *out* when a
-topic grows. Fix: when a topic exceeds a size threshold (rough start: >40
-bullets or >6 subheadings), split its subheadings into their own topic files
-and let the index category group them. Needs its own heuristic + a stable-slug
-rule so re-splits don't churn fingerprints. **Trigger:** a fat topic's size
-observably degrades load quality (irrelevant guidance dragged in on a narrow
-trigger), or topic count is low enough that splitting won't approach the ~120
-cap.
+The granularity redesign made small/medium topics single-concern and added within-file `## ` subheadings, but the largest topics stayed multi-concern: post-compose, `process-discipline-and-execution-rigor.md` (65 bullets, 9 subheadings) and `documentation-writing-and-maintenance.md` (68 bullets, 8 subheadings) each load ~7KB on one trigger.
+Their subheadings are effectively standalone topics (e.g. process-discipline bundles Scoping / Approval gates / Minimal complexity / Investigation-before-design / Correctness).
+The redesign added hierarchy *inside* a file but never promotes subheadings *out* when a topic grows.
+Fix: when a topic exceeds a size threshold (rough start: >40 bullets or >6 subheadings), split its subheadings into their own topic files and let the index category group them.
+Needs its own heuristic + a stable-slug rule so re-splits don't churn fingerprints.
+**Trigger:** a fat topic's size observably degrades load quality (irrelevant guidance dragged in on a narrow trigger), or topic count is low enough that splitting won't approach the ~120 cap.
