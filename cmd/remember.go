@@ -95,7 +95,7 @@ func appendProvisional(outDir string, kind extract.Kind, text string) error {
 		body = append(body, '\n')
 	}
 	addition := "\n" + provisionalMarker + "\n- " + text + "\n"
-	body = append(body, []byte(addition)...)
+	body = append(body, addition...)
 	return atomicfs.WriteFile(path, body, 0o644)
 }
 
