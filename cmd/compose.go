@@ -341,10 +341,8 @@ func loadSeed(outDir, label string) seed.Seed {
 	return sd
 }
 
-// seedObsContribution loads the user-authored seed-observations file from outDir,
-// returning its cluster members and a content hash to mix into the cluster
-// fingerprint. A missing or unreadable file yields no members and a stable hash
-// (logged, never fatal) — mirrors loadSeed.
+// seedObsContribution loads the user-authored seed-observations file from outDir, returning its cluster members and a content hash to mix into the cluster fingerprint.
+// A missing or unreadable file yields no members and a stable hash (logged, never fatal) — mirrors loadSeed.
 func seedObsContribution(outDir string) ([]cluster.ClusterMember, string) {
 	f, err := seed.LoadSeedObservations(seed.SeedObservationsPath(outDir))
 	if err != nil {
@@ -390,9 +388,8 @@ func runCluster(ctx context.Context) error {
 	seedHash := sd.Hash()
 
 	seedObsMembers, seedObsHash := seedObsContribution(outDir)
-	// Fold the seed-observations hash into the seed dimension of the cluster
-	// fingerprint so editing seed-observations.json re-clusters. No signature
-	// change to ClustersFingerprint: both seed inputs share one slot.
+	// Fold the seed-observations hash into the seed dimension of the cluster fingerprint so editing seed-observations.json re-clusters.
+	// No signature change to ClustersFingerprint: both seed inputs share one slot.
 	seedHash = fingerprint.Compute("seed-combined/v1", seedHash, seedObsHash)
 
 	expectedFP := cluster.ClustersFingerprint(

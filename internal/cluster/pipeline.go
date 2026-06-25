@@ -37,9 +37,8 @@ type Pipeline struct {
 	// so subsequent runs can detect input/threshold/model changes without
 	// rebuilding.
 	Fingerprint string
-	// ExtraMembers are injected into the member set after loading the
-	// observations dir — used for user-authored seed observations that do not
-	// live in observationsDir. nil in tests that don't need them.
+	// ExtraMembers are injected into the member set after loading the observations dir — used for user-authored seed observations that do not live in observationsDir.
+	// nil in tests that don't need them.
 	ExtraMembers []ClusterMember
 }
 
@@ -143,9 +142,8 @@ func LoadObservations(observationsDir string) ([]ClusterMember, error) {
 	return loadAllObservations(observationsDir)
 }
 
-// MembersFromObservations maps one observations file to ClusterMembers,
-// computing each member's stable observation hash. Shared by loadAllObservations
-// (extracted files) and callers injecting user-authored seed observations.
+// MembersFromObservations maps one observations file to ClusterMembers, computing each member's stable observation hash.
+// Shared by loadAllObservations (extracted files) and callers injecting user-authored seed observations.
 func MembersFromObservations(f extract.ObservationsFile) []ClusterMember {
 	out := make([]ClusterMember, 0, len(f.Observations))
 	for _, o := range f.Observations {

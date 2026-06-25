@@ -59,9 +59,7 @@ func parseKind(s string) (extract.Kind, error) {
 	}
 }
 
-// rememberFact records the fact as a high-confidence seed observation and
-// appends it to the matching live doc immediately (provisional, regenerated
-// away on the next compose).
+// rememberFact records the fact as a high-confidence seed observation and appends it to the matching live doc immediately (provisional, regenerated away on the next compose).
 func rememberFact(outDir string, kind extract.Kind, text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -79,8 +77,8 @@ func rememberFact(outDir string, kind extract.Kind, text string) error {
 	return appendProvisional(outDir, kind, text)
 }
 
-// appendProvisional appends a provisional bullet to the live doc matching kind:
-// identity.md for identity, rules.md for preference. Thrown away on next compose.
+// appendProvisional appends a provisional bullet to the live doc matching kind: identity.md for identity, rules.md for preference.
+// Thrown away on next compose.
 func appendProvisional(outDir string, kind extract.Kind, text string) error {
 	name := "rules.md"
 	if kind == extract.KindIdentity {
