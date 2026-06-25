@@ -10,3 +10,6 @@ docs/superpowers/
 # Editor/OS junk
 .DS_Store
 *.swp
+
+# subagent-driven-development scratch (local-only)
+.superpowers/
