@@ -83,3 +83,9 @@ var effectivenessJudgeSystem string
 // EffectivenessJudgeSystem returns the prompt for the audit purpose-fit judge.
 func EffectivenessJudgeSystem() string     { return effectivenessJudgeSystem }
 func EffectivenessJudgeSystemHash() string { return hashOf(effectivenessJudgeSystem) }
+
+//go:embed synthesize.categorize.system.md
+var synthesizeCategorizeSystem string
+
+func SynthesizeCategorizeSystem() string     { return synthesizeCategorizeSystem }
+func SynthesizeCategorizeSystemHash() string { return hashOf(synthesizeCategorizeSystem) }

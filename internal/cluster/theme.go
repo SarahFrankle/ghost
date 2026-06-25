@@ -22,11 +22,11 @@ type ThemesFile struct {
 // ThemesFingerprint composes the cache key for themes.json: the sorted unique
 // label set, the theme model, and both theme prompt hashes (identify + map).
 // Any new label, model swap, or edit to either prompt busts it.
-func ThemesFingerprint(uniqueLabels []string, themeModel, identifyPromptHash, mapPromptHash string) string {
+func ThemesFingerprint(uniqueLabels []string, themeModel, identifyPromptHash, mapPromptHash, seedHash string) string {
 	sorted := append([]string(nil), uniqueLabels...)
 	sort.Strings(sorted)
-	parts := make([]string, 0, len(sorted)+4)
-	parts = append(parts, "themes/v2", themeModel, identifyPromptHash, mapPromptHash)
+	parts := make([]string, 0, len(sorted)+5)
+	parts = append(parts, "themes/v3", themeModel, identifyPromptHash, mapPromptHash, seedHash)
 	parts = append(parts, sorted...)
 	return fingerprint.Compute(parts...)
 }

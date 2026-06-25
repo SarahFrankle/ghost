@@ -33,7 +33,7 @@ func TestBuildIndexFromTopicResults(t *testing.T) {
 		{Slug: "testing", Title: "Testing", Body: "# Testing\n\n- prefer tables.\n", EvidenceTotal: 4},
 		{Slug: "git", Title: "Git", Body: "# Git\n\n- rebase before merge.\n", EvidenceTotal: 5},
 	}
-	r := BuildIndex(context.Background(), f, "smart", topics)
+	r := BuildIndex(context.Background(), f, "smart", topics, nil)
 	if r.Err != nil {
 		t.Fatalf("BuildIndex: %v", r.Err)
 	}
@@ -44,11 +44,42 @@ func TestBuildIndexFromTopicResults(t *testing.T) {
 
 func TestBuildIndexEmptyTopics(t *testing.T) {
 	f := &fakeClient{resp: "should not be called"}
-	r := BuildIndex(context.Background(), f, "smart", nil)
+	r := BuildIndex(context.Background(), f, "smart", nil, nil)
 	if r.Err != nil {
 		t.Fatalf("BuildIndex: %v", r.Err)
 	}
 	if !strings.Contains(r.Content, "No lazy-loaded topics yet.") {
 		t.Fatalf("expected empty-state index, got %q", r.Content)
+	}
+}
+
+func TestBuildIndexTwoLevel(t *testing.T) {
+	var gotUser string
+	client := &fakeClient{complete: func(_ context.Context, _, _, user string) (string, error) {
+		gotUser = user
+		return "# Index\n\n## Topics\n\n### testing\n- topics/unit-tests.md (triggers: tests)\n", nil
+	}}
+	topics := []TopicResult{tr("unit-tests")}
+	res := BuildIndex(context.Background(), client, "m", topics, map[string]string{"unit-tests": "testing"})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	if !strings.Contains(gotUser, "category: testing") {
+		t.Fatalf("category not passed to model:\n%s", gotUser)
+	}
+}
+
+func TestBuildIndexFlatFallbackWhenNoCategories(t *testing.T) {
+	var gotUser string
+	client := &fakeClient{complete: func(_ context.Context, _, _, user string) (string, error) {
+		gotUser = user
+		return "# Index\n\n## Topics\n- topics/unit-tests.md (triggers: tests)\n", nil
+	}}
+	res := BuildIndex(context.Background(), client, "m", []TopicResult{tr("unit-tests")}, nil)
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	if strings.Contains(gotUser, "category:") {
+		t.Fatalf("nil categories must render flat (no category lines):\n%s", gotUser)
 	}
 }

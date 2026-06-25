@@ -6,18 +6,18 @@ import (
 )
 
 func TestThemesFingerprintStableAndSensitive(t *testing.T) {
-	a := ThemesFingerprint([]string{"b", "a"}, "sonnet", "ih", "mh")
-	b := ThemesFingerprint([]string{"a", "b"}, "sonnet", "ih", "mh") // order-insensitive
+	a := ThemesFingerprint([]string{"b", "a"}, "sonnet", "ih", "mh", "sh")
+	b := ThemesFingerprint([]string{"a", "b"}, "sonnet", "ih", "mh", "sh") // order-insensitive
 	if a != b {
 		t.Fatal("fingerprint should be order-insensitive")
 	}
-	if a == ThemesFingerprint([]string{"a", "b"}, "sonnet", "ih2", "mh") {
+	if a == ThemesFingerprint([]string{"a", "b"}, "sonnet", "ih2", "mh", "sh") {
 		t.Fatal("identify-prompt change must alter fingerprint")
 	}
-	if a == ThemesFingerprint([]string{"a", "b"}, "sonnet", "ih", "mh2") {
+	if a == ThemesFingerprint([]string{"a", "b"}, "sonnet", "ih", "mh2", "sh") {
 		t.Fatal("map-prompt change must alter fingerprint")
 	}
-	if a == ThemesFingerprint([]string{"a", "b", "c"}, "sonnet", "ih", "mh") {
+	if a == ThemesFingerprint([]string{"a", "b", "c"}, "sonnet", "ih", "mh", "sh") {
 		t.Fatal("label-set change must alter fingerprint")
 	}
 }
@@ -34,6 +34,14 @@ func TestThemesRoundTrip(t *testing.T) {
 	}
 	if got.Fingerprint != "fp" || got.Mapping["git"] != "Git Workflow" {
 		t.Fatalf("round trip mismatch: %+v", got)
+	}
+}
+
+func TestThemesFingerprintSeedHashBusts(t *testing.T) {
+	a := ThemesFingerprint([]string{"l"}, "m", "i", "p", "seedA")
+	b := ThemesFingerprint([]string{"l"}, "m", "i", "p", "seedB")
+	if a == b {
+		t.Fatal("editing the seed hash must bust the themes fingerprint")
 	}
 }
 

@@ -94,7 +94,7 @@ func Defaults() Config {
 			ExtractWorkers: 5,
 			SynthWorkers:   8,
 		},
-		Index: Index{MaxTopicEntries: 20},
+		Index: Index{MaxTopicEntries: 120},
 	}
 }
 

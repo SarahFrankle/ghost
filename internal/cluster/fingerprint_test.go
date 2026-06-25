@@ -13,17 +13,18 @@ import (
 )
 
 func TestClustersFingerprintDistinguishesInputs(t *testing.T) {
-	base := ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3)
+	base := ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3, "sh")
 	cases := map[string]string{
-		"obs added":               ClustersFingerprint([]string{"a", "b", "c"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3),
-		"embedding model":         ClustersFingerprint([]string{"a", "b"}, "nomic-embed-text", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3),
-		"identity/rule threshold": ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.86, "haiku", "lp", "sonnet", "tip", "tmp", 3),
-		"label model":             ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku2", "lp", "sonnet", "tip", "tmp", 3),
-		"label prompt":            ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp2", "sonnet", "tip", "tmp", 3),
-		"theme model":             ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "opus", "tip", "tmp", 3),
-		"theme identify prompt":   ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip2", "tmp", 3),
-		"theme map prompt":        ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp2", 3),
-		"min cluster size":        ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 4),
+		"obs added":               ClustersFingerprint([]string{"a", "b", "c"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3, "sh"),
+		"embedding model":         ClustersFingerprint([]string{"a", "b"}, "nomic-embed-text", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3, "sh"),
+		"identity/rule threshold": ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.86, "haiku", "lp", "sonnet", "tip", "tmp", 3, "sh"),
+		"label model":             ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku2", "lp", "sonnet", "tip", "tmp", 3, "sh"),
+		"label prompt":            ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp2", "sonnet", "tip", "tmp", 3, "sh"),
+		"theme model":             ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "opus", "tip", "tmp", 3, "sh"),
+		"theme identify prompt":   ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip2", "tmp", 3, "sh"),
+		"theme map prompt":        ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp2", 3, "sh"),
+		"min cluster size":        ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 4, "sh"),
+		"seed hash":               ClustersFingerprint([]string{"a", "b"}, "voyage-3-lite", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3, "sh2"),
 	}
 	for name, fp := range cases {
 		if fp == base {
@@ -118,19 +119,20 @@ func TestObservationsFingerprintsSkipEmptyFiles(t *testing.T) {
 	}
 }
 
-func TestClustersFingerprintUsesV4Namespace(t *testing.T) {
-	got := ClustersFingerprint([]string{"a"}, "m", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3)
+func TestClustersFingerprintUsesV5Namespace(t *testing.T) {
+	got := ClustersFingerprint([]string{"a"}, "m", 0.85, "haiku", "lp", "sonnet", "tip", "tmp", 3, "sh")
 	want := fingerprint.Compute(
-		"cluster/v4", "m",
+		"cluster/v5", "m",
 		fmt.Sprintf("identity_rule=%g", float32(0.85)),
 		"label_model=haiku", "label_prompt=lp",
 		"theme_model=sonnet",
 		"theme_identify_prompt=tip", "theme_map_prompt=tmp",
 		fmt.Sprintf("min_cluster=%d", 3),
+		"seed=sh",
 		"a",
 	)
 	if got != want {
-		t.Fatalf("ClustersFingerprint must use the cluster/v4 namespace:\n got=%s\nwant=%s", got, want)
+		t.Fatalf("ClustersFingerprint must use the cluster/v5 namespace:\n got=%s\nwant=%s", got, want)
 	}
 }
 
