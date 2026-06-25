@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SarahFrankle/ghost/internal/atomicfs"
 	"github.com/SarahFrankle/ghost/internal/extract"
 	"github.com/SarahFrankle/ghost/internal/paths"
 	"github.com/SarahFrankle/ghost/internal/seed"
@@ -95,7 +96,7 @@ func appendProvisional(outDir string, kind extract.Kind, text string) error {
 	}
 	addition := "\n" + provisionalMarker + "\n- " + text + "\n"
 	body = append(body, []byte(addition)...)
-	return os.WriteFile(path, body, 0o644)
+	return atomicfs.WriteFile(path, body, 0o644)
 }
 
 func init() {

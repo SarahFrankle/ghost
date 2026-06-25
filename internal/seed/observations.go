@@ -59,6 +59,11 @@ func AppendSeedObservation(path string, o extract.Observation) error {
 	return atomicfs.WriteFile(path, b, 0o644)
 }
 
+// ObservationsHash hashes kind+text only — confidence and evidence are excluded
+// intentionally so that changes to those fields alone do not re-trigger reclustering.
+// This is safe because `ghost remember` always writes fixed high confidence and
+// generated evidence; the semantically meaningful content is kind+text.
+//
 // ObservationsHash is a content fingerprint over the observations' kind+text.
 // Mixed into the cluster fingerprint so editing the seed-observations file
 // re-runs clustering/synthesis.
